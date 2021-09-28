@@ -18,10 +18,8 @@ void* FindFirstString(void* pBegin, void* pEnd, const char* szString) {
 	unsigned char* ppEnd = reinterpret_cast<unsigned char*>(pEnd) - unStringLength;
 	for (unsigned char* pPoint = reinterpret_cast<unsigned char*>(pBegin); pPoint < ppEnd; ++pPoint) {
 		bool bSuccess = true;
-		for (uintptr_t j = 0; j < unStringLength; ++j)
-		{
-			if (reinterpret_cast<char*>(pPoint)[j] != szString[j])
-			{
+		for (uintptr_t j = 0; j < unStringLength; ++j) {
+			if (reinterpret_cast<char*>(pPoint)[j] != szString[j]) {
 				bSuccess = false;
 				break;
 			}
@@ -189,7 +187,7 @@ void* FindRTTIClass(const char* szModuleName, const char* szName, bool bRVA = fa
 // ecx - this
 // edx - unused
 typedef bool(__fastcall* fnIsTrue)(void* ecx, void* edx);
-typedef const char* (__fastcall* fnHelloWorld)(void* ecx, void* edx);
+typedef const char*(__fastcall* fnHelloWorld)(void* ecx, void* edx);
 
 int main() {
 	HMODULE hTestDLL = LoadLibrary(TEXT("TestDLL.dll"));
