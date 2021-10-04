@@ -190,6 +190,60 @@ static bool MapFile(const char* szFilePath, PHANDLE phFile, PHANDLE phFileMap, L
 	return true;
 }
 
+#ifdef EXPERIMENTAL_OPTIMIZATION
+static bool GetRealModuleDimensions(HMODULE hModule, void** ppBegin, void **ppEnd) {
+	if (!hModule) {
+		return false;
+	}
+
+	MODULEINFO modinf;
+	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
+		return false;
+	}
+
+	uintptr_t unBegin = reinterpret_cast<uintptr_t>(modinf.lpBaseOfDll);
+	uintptr_t unEnd = unBegin + modinf.SizeOfImage;
+
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(modinf.lpBaseOfDll);
+	PIMAGE_NT_HEADERS pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<char*>(pDH) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+
+	uintptr_t unLastBegin = unBegin;
+	uintptr_t unLastEnd = unEnd;
+	for (unsigned long i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		if (pFirstSection->Characteristics & (IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ)) {
+			uintptr_t unSectionBegin = unBegin + pFirstSection->VirtualAddress;
+			uintptr_t unSectionEnd = unBegin + pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize;
+
+			//unLastBegin = max(unBegin, unSectionBegin);
+			if (unBegin > unSectionBegin) {
+				unLastBegin = unBegin;
+			}
+			else {
+				unLastBegin = unSectionBegin;
+			}
+			//unLastEnd = min(unEnd, unSectionEnd);
+			if (unEnd < unSectionEnd) {
+				unLastEnd = unEnd;
+			}
+			else {
+				unLastEnd = unSectionEnd;
+			}
+		}
+	}
+
+	if (ppBegin) {
+		*ppBegin = reinterpret_cast<void*>(unBegin);
+	}
+	if (ppEnd) {
+		*ppEnd = reinterpret_cast<void*>(unEnd);
+	}
+
+	return true;
+}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
 static bool MapNewFile(const char* szFilePath, PHANDLE phFile, PHANDLE phFileMap, LPVOID* ppMap, DWORD dwNumberOfBytesToMap) {
 	HANDLE hFile = CreateFileA(szFilePath, GENERIC_WRITE | GENERIC_READ, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (hFile == INVALID_HANDLE_VALUE) {
@@ -457,8 +511,18 @@ void* RTTI::FindTypeInfoAddressFromModule(HMODULE hModule) {
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindTypeInfoAddressFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage));
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindTypeInfoAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 }
 
 uintptr_t RTTI::FindTypeInfoOffsetFromModule(HMODULE hModule) {
@@ -472,8 +536,18 @@ uintptr_t RTTI::FindTypeInfoOffsetFromModule(HMODULE hModule) {
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindTypeInfoOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage));
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindTypeInfoOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 }
 
 uintptr_t RTTI::FindTypeInfoOffsetFromFile(const char* szModulePath) {
@@ -529,8 +603,18 @@ void* RTTI::FindReferenceAddressFromModule32(HMODULE hModule, unsigned int unVal
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferenceAddressFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), unValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferenceAddressFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
 }
 
 uintptr_t RTTI::FindReferenceOffsetFromModule32(HMODULE hModule, unsigned int unValue) {
@@ -544,8 +628,18 @@ uintptr_t RTTI::FindReferenceOffsetFromModule32(HMODULE hModule, unsigned int un
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferenceOffsetFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), unValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferenceOffsetFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
 }
 
 uintptr_t RTTI::FindReferenceOffsetFromFile32(const char* szModulePath, unsigned int unValue) {
@@ -622,8 +716,18 @@ std::vector<void*> RTTI::FindReferencesAddressesFromModule32(HMODULE hModule, un
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferencesAddressesFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), unValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferencesAddressesFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
 }
 
 std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule32(HMODULE hModule, unsigned int unValue) {
@@ -639,8 +743,18 @@ std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule32(HMODULE hModule, 
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferencesOffsetsFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), unValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferencesOffsetsFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
 }
 
 std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromFile32(const char* szModulePath, unsigned int unValue) {
@@ -696,8 +810,18 @@ void* RTTI::FindReferenceAddressFromModule(HMODULE hModule, void* pValue) {
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferenceAddressFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), pValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferenceAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
 }
 
 uintptr_t RTTI::FindReferenceOffsetFromModule(HMODULE hModule, void* pValue) {
@@ -711,8 +835,18 @@ uintptr_t RTTI::FindReferenceOffsetFromModule(HMODULE hModule, void* pValue) {
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferenceOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), pValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferenceOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
 }
 
 uintptr_t RTTI::FindReferenceOffsetFromFile(const char* szModulePath, void* pValue) {
@@ -789,8 +923,18 @@ std::vector<void*> RTTI::FindReferencesAddressesFromModule(HMODULE hModule, void
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferencesAddressesFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), pValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferencesAddressesFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
 }
 
 std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule(HMODULE hModule, void* pValue) {
@@ -806,8 +950,18 @@ std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule(HMODULE hModule, vo
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	return FindReferencesOffsetsFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), pValue);
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return FindReferencesOffsetsFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
 }
 
 std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromFile(const char* szModulePath, void* pValue) {
@@ -1039,6 +1193,10 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromRange(void* pBegin, void* pEnd) {
 vecSymbolsAddresses RTTI::GetVTablesAddressesFromModule(HMODULE hModule) {
 	vecSymbolsAddresses vecData;
 
+	if (!hModule) {
+		return vecData;
+	}
+
 	if (m_bCaching && m_bModulesCaching) {
 		for (vecModulesSymbolsAddresses::iterator it = m_vecModulesSymbolsAddressesCache.begin(); it != m_vecModulesSymbolsAddressesCache.end(); ++it) {
 			HMODULE hMod = std::get<0>(*it);
@@ -1048,18 +1206,24 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromModule(HMODULE hModule) {
 		}
 	}
 
-	if (!hModule) {
-		return vecData;
-	}
-
 	MODULEINFO modinf;
 	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
 		return vecData;
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
+	
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
 
-	vecData = GetVTablesAddressesFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage));
+	vecData = GetVTablesAddressesFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 
 	if (m_bCaching && m_bModulesCaching && (vecData.size() > 0)) {
 		m_vecModulesSymbolsAddressesCache.push_back(ModuleSymbolsAddresses(hModule, vecData));
@@ -1090,8 +1254,18 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromModule(HMODULE hModule) {
 	}
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-	vecData = GetVTablesOffsetsFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage));
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	vecData = GetVTablesOffsetsFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 
 	if (m_bCaching && m_bModulesCaching && (vecData.size() > 0)) {
 		m_vecModulesSymbolsOffsetsCache.push_back(ModuleSymbolsOffsets(hModule, vecData));
@@ -1165,39 +1339,69 @@ uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* s
 }
 
 void* RTTI::GetVTableAddressFromModule(HMODULE hModule, const char* szClassName) {
+
 	if (m_bCaching && m_bModulesCaching) {
 		void* pResult = GetVTableAddressFromModuleCache(hModule, szClassName);
 		if (pResult) {
 			return pResult;
 		}
 	}
+
 	if (!hModule) {
 		return nullptr;
 	}
+
 	MODULEINFO modinf;
 	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
 		return nullptr;
 	}
+
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	return GetVTableAddressFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), szClassName);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
+
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return GetVTableAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
 }
 
 uintptr_t RTTI::GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName) {
+
 	if (m_bCaching && m_bModulesCaching) {
 		uintptr_t unResult = GetVTableOffsetFromModuleCache(hModule, szClassName);
 		if (unResult) {
 			return unResult;
 		}
 	}
+
 	if (!hModule) {
 		return 0;
 	}
+
 	MODULEINFO modinf;
 	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
 		return 0;
 	}
+
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	return GetVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + modinf.SizeOfImage), szClassName);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
+
+#ifdef EXPERIMENTAL_OPTIMIZATION
+	unsigned char* dpBegin = nullptr;
+	void* dpEnd = nullptr;
+	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
+		pBegin = dpBegin;
+		pEnd = dpEnd;
+	}
+#endif // EXPERIMENTAL_OPTIMIZATION
+
+	return GetVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
 }
 
 uintptr_t RTTI::GetVTableOffsetFromFile(const char* szModulePath, const char* szClassName) {
