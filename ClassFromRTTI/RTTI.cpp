@@ -999,9 +999,9 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromRange(void* pBegin, void* pEnd)
 
 	if (m_bCaching && m_bRangesCaching) {
 		for (vecRangesSymbolsAddresses::iterator it = m_vecRangesSymbolsAddressesCache.begin(); it != m_vecRangesSymbolsAddressesCache.end(); ++it) {
-			RangeOfDataForRTII rangeData = std::get<0>(*it);
-			void* pcBegin = std::get<0>(rangeData);
-			void* pcEnd = std::get<1>(rangeData);
+			RangeOfDataForRTII& rangeData = std::get<0>(*it);
+			void*& pcBegin = std::get<0>(rangeData);
+			void*& pcEnd = std::get<1>(rangeData);
 			if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 				return std::get<1>(*it);
 			}
@@ -1104,9 +1104,9 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromRange(void* pBegin, void* pEnd) {
 
 	if (m_bCaching && m_bRangesCaching) {
 		for (vecRangesSymbolsOffsets::iterator it = m_vecRangesSymbolsOffsetsCache.begin(); it != m_vecRangesSymbolsOffsetsCache.end(); ++it) {
-			RangeOfDataForRTII rangeData = std::get<0>(*it);
-			void* pcBegin = std::get<0>(rangeData);
-			void* pcEnd = std::get<1>(rangeData);
+			RangeOfDataForRTII& rangeData = std::get<0>(*it);
+			void*& pcBegin = std::get<0>(rangeData);
+			void*& pcEnd = std::get<1>(rangeData);
 			if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 				return std::get<1>(*it);
 			}
@@ -1213,7 +1213,7 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromModule(HMODULE hModule) {
 
 	if (m_bCaching && m_bModulesCaching) {
 		for (vecModulesSymbolsAddresses::iterator it = m_vecModulesSymbolsAddressesCache.begin(); it != m_vecModulesSymbolsAddressesCache.end(); ++it) {
-			HMODULE hMod = std::get<0>(*it);
+			HMODULE& hMod = std::get<0>(*it);
 			if (hMod == hModule) {
 				return std::get<1>(*it);
 			}
@@ -1251,7 +1251,7 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromModule(HMODULE hModule) {
 
 	if (m_bCaching && m_bModulesCaching) {
 		for (vecModulesSymbolsOffsets::iterator it = m_vecModulesSymbolsOffsetsCache.begin(); it != m_vecModulesSymbolsOffsetsCache.end(); ++it) {
-			HMODULE hMod = std::get<0>(*it);
+			HMODULE& hMod = std::get<0>(*it);
 			if (hMod == hModule) {
 				return std::get<1>(*it);
 			}
@@ -1294,7 +1294,7 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromFile(const char* szModulePath) {
 
 	if (m_bCaching && m_bFilesCaching) {
 		for (vecFilesSymbolsOffsets::iterator it = m_vecFilesSymbolsOffsetsCache.begin(); it != m_vecFilesSymbolsOffsetsCache.end(); ++it) {
-			std::string str_ModulePath = std::get<0>(*it);
+			std::string& str_ModulePath = std::get<0>(*it);
 			if (strcmp(str_ModulePath.data(), szModulePath) == 0) {
 				return std::get<1>(*it);
 			}
@@ -1329,7 +1329,7 @@ void* RTTI::GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szCl
 	}
 	vecSymbolsAddresses vecData = GetVTablesAddressesFromRange(pBegin, pEnd);
 	for (vecSymbolsAddresses::iterator it = vecData.begin(); it != vecData.end(); ++it) {
-		std::string str_SymbolName = std::get<0>(*it);
+		std::string& str_SymbolName = std::get<0>(*it);
 		if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 			return std::get<1>(*it);
 		}
@@ -1346,7 +1346,7 @@ uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* s
 	}
 	vecSymbolsOffsets vecData = GetVTablesOffsetsFromRange(pBegin, pEnd);
 	for (vecSymbolsOffsets::iterator it = vecData.begin(); it != vecData.end(); ++it) {
-		std::string str_SymbolName = std::get<0>(*it);
+		std::string& str_SymbolName = std::get<0>(*it);
 		if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 			return std::get<1>(*it);
 		}
@@ -1445,13 +1445,13 @@ uintptr_t RTTI::GetVTableOffsetFromFile(const char* szModulePath, const char* sz
 // Finding in cache
 void* RTTI::GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char* szClassName) {
 	for (vecRangesSymbolsAddresses::iterator it = m_vecRangesSymbolsAddressesCache.begin(); it != m_vecRangesSymbolsAddressesCache.end(); ++it) {
-		RangeOfDataForRTII dataRange = std::get<0>(*it);
-		void* pcBegin = std::get<0>(dataRange);
-		void* pcEnd = std::get<1>(dataRange);
+		RangeOfDataForRTII& dataRange = std::get<0>(*it);
+		void*& pcBegin = std::get<0>(dataRange);
+		void*& pcEnd = std::get<1>(dataRange);
 		if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
-			vecSymbolsAddresses vecSymbols = std::get<1>(*it);
+			vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsAddresses::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string str_SymbolName = std::get<0>(*sit);
+				std::string& str_SymbolName = std::get<0>(*sit);
 				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 					return std::get<1>(*sit);
 				}
@@ -1463,13 +1463,13 @@ void* RTTI::GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char*
 
 uintptr_t RTTI::GetVTableOffsetFromRangeCache(void* pBegin, void* pEnd, const char* szClassName) {
 	for (vecRangesSymbolsOffsets::iterator it = m_vecRangesSymbolsOffsetsCache.begin(); it != m_vecRangesSymbolsOffsetsCache.end(); ++it) {
-		RangeOfDataForRTII dataRange = std::get<0>(*it);
-		void* pcBegin = std::get<0>(dataRange);
-		void* pcEnd = std::get<1>(dataRange);
+		RangeOfDataForRTII& dataRange = std::get<0>(*it);
+		void*& pcBegin = std::get<0>(dataRange);
+		void*& pcEnd = std::get<1>(dataRange);
 		if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
-			vecSymbolsOffsets vecSymbols = std::get<1>(*it);
+			vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string str_SymbolName = std::get<0>(*sit);
+				std::string& str_SymbolName = std::get<0>(*sit);
 				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 					return std::get<1>(*sit);
 				}
@@ -1481,11 +1481,11 @@ uintptr_t RTTI::GetVTableOffsetFromRangeCache(void* pBegin, void* pEnd, const ch
 
 void* RTTI::GetVTableAddressFromModuleCache(HMODULE hModule, const char* szClassName) {
 	for (vecModulesSymbolsAddresses::iterator it = m_vecModulesSymbolsAddressesCache.begin(); it != m_vecModulesSymbolsAddressesCache.end(); ++it) {
-		HMODULE hMod = std::get<0>(*it);
+		HMODULE& hMod = std::get<0>(*it);
 		if (hMod == hModule) {
-			vecSymbolsAddresses vecSymbols = std::get<1>(*it);
+			vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsAddresses::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string str_SymbolName = std::get<0>(*sit);
+				std::string& str_SymbolName = std::get<0>(*sit);
 				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 					return std::get<1>(*sit);
 				}
@@ -1497,11 +1497,11 @@ void* RTTI::GetVTableAddressFromModuleCache(HMODULE hModule, const char* szClass
 
 uintptr_t RTTI::GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szClassName) {
 	for (vecModulesSymbolsOffsets::iterator it = m_vecModulesSymbolsOffsetsCache.begin(); it != m_vecModulesSymbolsOffsetsCache.end(); ++it) {
-		HMODULE hMod = std::get<0>(*it);
+		HMODULE& hMod = std::get<0>(*it);
 		if (hMod == hModule) {
-			vecSymbolsOffsets vecSymbols = std::get<1>(*it);
+			vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string str_SymbolName = std::get<0>(*sit);
+				std::string& str_SymbolName = std::get<0>(*sit);
 				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 					return std::get<1>(*sit);
 				}
@@ -1514,11 +1514,11 @@ uintptr_t RTTI::GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szCl
 #ifdef RTTI_EXPERIMENTAL_FEATURES
 uintptr_t RTTI::GetVTableOffsetFromFileCache(const char* szModulePath, const char* szClassName) {
 	for (vecFilesSymbolsOffsets::iterator it = m_vecFilesSymbolsOffsetsCache.begin(); it != m_vecFilesSymbolsOffsetsCache.end(); ++it) {
-		std::string str_ModulePath = std::get<0>(*it);
+		std::string& str_ModulePath = std::get<0>(*it);
 		if (strcmp(str_ModulePath.data(), szModulePath) == 0) {
-			vecSymbolsOffsets vecSymbols = std::get<1>(*it);
+			vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string str_SymbolName = std::get<0>(*sit);
+				std::string& str_SymbolName = std::get<0>(*sit);
 				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
 					return std::get<1>(*sit);
 				}
