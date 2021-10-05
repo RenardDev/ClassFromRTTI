@@ -19,8 +19,8 @@ typedef const char*(__fastcall* fnHelloWorld)(void* ecx, void* edx);
 
 
 int main() {
-	RTTI cRTTI1(true, true, true, true);
-	RTTI cRTTI2;
+	RTTI cRTTI1(true, true, true, true); // With caching
+	RTTI cRTTI2; // Without caching
 	
 	HMODULE hTestDLL = LoadLibrary(TEXT("TestDLL.dll"));
 	if (!hTestDLL) {
