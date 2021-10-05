@@ -568,7 +568,7 @@ uintptr_t RTTI::FindTypeInfoOffsetFromFile(const char* szModulePath) {
 	}
 	return unResult;
 }
-#endif // RTTI_EXPERIMENTAL_FEATURES
+#endif
 
 // Finding references (32 - bits)
 //  One
@@ -662,7 +662,7 @@ uintptr_t RTTI::FindReferenceOffsetFromFile32(const char* szModulePath, unsigned
 	}
 	return unResult;
 }
-#endif
+#endif // RTTI_EXPERIMENTAL_FEATURES
 
 //  Multiple
 std::vector<void*> RTTI::FindReferencesAddressesFromRange32(void* pBegin, void* pEnd, unsigned int unValue) {

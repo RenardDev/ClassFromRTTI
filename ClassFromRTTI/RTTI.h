@@ -48,8 +48,8 @@ typedef std::tuple<std::string, void*> SymbolAddress; // <symbol>:<address/offse
 typedef std::vector<SymbolAddress> vecSymbolsAddresses; // <symbols>
 typedef std::tuple<RangeOfDataForRTII, vecSymbolsAddresses> RangeSymbolsAddresses; // <range>
 typedef std::tuple<HMODULE, vecSymbolsAddresses> ModuleSymbolsAddresses; // <module>
-typedef std::vector<RangeSymbolsAddresses> vecRangesSymbolsAddresses, * pvecRangesSymbolsAddresses; // <ranges>
-typedef std::vector<ModuleSymbolsAddresses> vecModulesSymbolsAddresses, * pvecModulesSymbolsAddresses; // <modules>
+typedef std::vector<RangeSymbolsAddresses> vecRangesSymbolsAddresses, *pvecRangesSymbolsAddresses; // <ranges>
+typedef std::vector<ModuleSymbolsAddresses> vecModulesSymbolsAddresses, *pvecModulesSymbolsAddresses; // <modules>
 
 // Offset
 typedef std::tuple<std::string, uintptr_t> SymbolOffset; // <symbol>:<address/offset>
@@ -59,10 +59,10 @@ typedef std::tuple<HMODULE, vecSymbolsOffsets> ModuleSymbolsOffsets; // <module>
 #ifdef RTTI_EXPERIMENTAL_FEATURES
 typedef std::tuple<std::string, vecSymbolsOffsets> FileSymbolsOffsets; // <file>
 #endif // RTTI_EXPERIMENTAL_FEATURES
-typedef std::vector<RangeSymbolsOffsets> vecRangesSymbolsOffsets, * pvecRangesSymbolsOffsets; // <ranges>
-typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, * pvecModulesSymbolsOffsets; // <modules>
+typedef std::vector<RangeSymbolsOffsets> vecRangesSymbolsOffsets, *pvecRangesSymbolsOffsets; // <ranges>
+typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, *pvecModulesSymbolsOffsets; // <modules>
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-typedef std::vector<FileSymbolsOffsets> vecFilesSymbolsOffsets, * pvecFilesSymbolsOffsets; // <files>
+typedef std::vector<FileSymbolsOffsets> vecFilesSymbolsOffsets, *pvecFilesSymbolsOffsets; // <files>
 #endif // RTTI_EXPERIMENTAL_FEATURES
 
 //---------------------------------------------------------------------------------

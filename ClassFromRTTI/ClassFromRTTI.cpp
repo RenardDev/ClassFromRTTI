@@ -33,6 +33,7 @@ int main() {
 
 	uintptr_t unTestingRVA = cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL");
 	printf("TestingDLL (RVA) = 0x%IX\n", unTestingRVA);
+
 	high_resolution_clock::time_point t1;
 	high_resolution_clock::time_point t2;
 	t1 = high_resolution_clock::now();
