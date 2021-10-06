@@ -29,6 +29,7 @@ typedef void(CALLBACK* PLDR_DLL_NOTIFICATION_FUNCTION)(_In_ ULONG NotificationRe
 typedef NTSTATUS(NTAPI* fnLdrRegisterDllNotification)(_In_ ULONG Flags, _In_ PLDR_DLL_NOTIFICATION_FUNCTION NotificationFunction, _In_opt_ PVOID Context, _Out_ PVOID* Cookie);
 typedef NTSTATUS(NTAPI* fnLdrUnregisterDllNotification)(_In_ PVOID Cookie);
 #endif // RTTI_EXPERIMENTAL_FEATURES
+
 typedef struct _TYPEDESCRIPTOR {
 	void* pVFTable;
 	void* pSpare;
@@ -36,8 +37,8 @@ typedef struct _TYPEDESCRIPTOR {
 } TYPEDESCRIPTOR, *PTYPEDESCRIPTOR;
 
 // Helpful functions
-static void* FindSigLinear(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature, uintptr_t unOffset = 0, bool bToAbsoluteAddress = false) {
-	size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
+static void* FindSignatureNative(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
+	const size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
 
 	for (uintptr_t i = 0; i < reinterpret_cast<uintptr_t>(pEnd); i++, pBegin++) {
 		uintptr_t unNextStart = 0;
@@ -58,13 +59,7 @@ static void* FindSigLinear(unsigned char* pBegin, const unsigned char* pEnd, con
 			}
 		}
 		if (bSuccess) {
-			if (!bToAbsoluteAddress) {
-				return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin) + unOffset);
-			}
-			else {
-				return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin) + unOffset + sizeof(uintptr_t) + (*reinterpret_cast<uintptr_t*>(reinterpret_cast<uintptr_t>(pBegin) + unOffset)));
-			}
-			break;
+			return pBegin;
 		}
 		else {
 			i += unResult;
@@ -74,9 +69,9 @@ static void* FindSigLinear(unsigned char* pBegin, const unsigned char* pEnd, con
 	return nullptr;
 }
 
-static void* FindSigSSE2(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature, uintptr_t unOffset = 0, bool bToAbsoluteAddress = false) {
-	size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
-	uintptr_t unSignaturesCount = static_cast<uintptr_t>(ceil(static_cast<float>(unSignatureLength) / 16.f));
+static void* FindSignatureSSE2(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
+	const size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
+	const uintptr_t unSignaturesCount = static_cast<uintptr_t>(ceil(static_cast<float>(unSignatureLength) / 16.f));
 	unsigned int pSignatures[32];
 	memset(pSignatures, 0, sizeof(pSignatures));
 	for (uintptr_t i = 0; i < unSignaturesCount; ++i) {
@@ -87,7 +82,7 @@ static void* FindSigSSE2(unsigned char* pBegin, const unsigned char* pEnd, const
 		}
 	}
 
-	__m128i xmm0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(szSignature));
+	const __m128i xmm0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(szSignature));
 
 	for (; pBegin != pEnd; _mm_prefetch(reinterpret_cast<const char*>(++pBegin + 64), _MM_HINT_NTA)) {
 		if (pBegin > pEnd) {
@@ -98,17 +93,11 @@ static void* FindSigSSE2(unsigned char* pBegin, const unsigned char* pEnd, const
 				for (uintptr_t i = 1; i < unSignaturesCount; ++i) {
 					if ((_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(pBegin + i * 16)), _mm_loadu_si128(reinterpret_cast<const __m128i*>(szSignature + i * 16)))) & pSignatures[i]) == pSignatures[i]) {
 						if ((i + 1) == unSignaturesCount) {
-							if (bToAbsoluteAddress) {
-								return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin + unOffset) + sizeof(uintptr_t) + (*reinterpret_cast<uintptr_t*>(pBegin + unOffset)));
-							}
-							return reinterpret_cast<void*>(pBegin + unOffset);
+							return pBegin;
 						}
 					}
 				}
-				if (bToAbsoluteAddress) {
-					return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin + unOffset) + sizeof(uintptr_t) + (*reinterpret_cast<uintptr_t*>(pBegin + unOffset)));
-				}
-				return reinterpret_cast<void*>(pBegin + unOffset);
+				return pBegin;
 			}
 		}
 	}
@@ -116,9 +105,9 @@ static void* FindSigSSE2(unsigned char* pBegin, const unsigned char* pEnd, const
 	return nullptr;
 }
 
-static void* FindSigAVX2(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature, uintptr_t unOffset = 0, bool bToAbsoluteAddress = false) {
-	size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
-	uintptr_t unSignaturesCount = static_cast<uintptr_t>(ceil(static_cast<float>(unSignatureLength) / 32.f));
+static void* FindSignatureAVX2(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
+	const size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
+	const uintptr_t unSignaturesCount = static_cast<uintptr_t>(ceil(static_cast<float>(unSignatureLength) / 32.f));
 	unsigned int pSignatures[64];
 	memset(pSignatures, 0, sizeof(pSignatures));
 	for (uintptr_t i = 0; i < unSignaturesCount; ++i) {
@@ -129,7 +118,7 @@ static void* FindSigAVX2(unsigned char* pBegin, const unsigned char* pEnd, const
 		}
 	}
 
-	__m256i xmm0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(szSignature));
+	const __m256i xmm0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(szSignature));
 
 	for (; pBegin != pEnd; _mm_prefetch(reinterpret_cast<const char*>(++pBegin + 128), _MM_HINT_NTA)) {
 		if (pBegin > pEnd) {
@@ -140,17 +129,11 @@ static void* FindSigAVX2(unsigned char* pBegin, const unsigned char* pEnd, const
 				for (uintptr_t i = 1; i < unSignaturesCount; ++i) {
 					if ((_mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(pBegin + i * 32)), _mm256_loadu_si256(reinterpret_cast<const __m256i*>(szSignature + i * 32)))) & pSignatures[i]) == pSignatures[i]) {
 						if ((i + 1) == unSignaturesCount) {
-							if (bToAbsoluteAddress) {
-								return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin + unOffset) + sizeof(uintptr_t) + (*reinterpret_cast<uintptr_t*>(pBegin + unOffset)));
-							}
-							return reinterpret_cast<void*>(pBegin + unOffset);
+							return pBegin;
 						}
 					}
 				}
-				if (bToAbsoluteAddress) {
-					return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pBegin + unOffset) + sizeof(uintptr_t) + (*reinterpret_cast<uintptr_t*>(pBegin + unOffset)));
-				}
-				return reinterpret_cast<void*>(pBegin + unOffset);
+				return pBegin;
 			}
 		}
 	}
@@ -158,143 +141,11 @@ static void* FindSigAVX2(unsigned char* pBegin, const unsigned char* pEnd, const
 	return nullptr;
 }
 
-static bool MapFile(const char* szFilePath, PHANDLE phFile, PHANDLE phFileMap, LPVOID* ppMap) {
-	HANDLE hFile = CreateFileA(szFilePath, GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		return false;
-	}
-
-	HANDLE hFileMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-	if (hFileMap == INVALID_HANDLE_VALUE) {
-		CloseHandle(hFile);
-		return false;
-	}
-
-	LPVOID pMap = MapViewOfFile(hFileMap, FILE_MAP_READ, 0, 0, 0);
-	if (!pMap) {
-		CloseHandle(hFileMap);
-		CloseHandle(hFile);
-		return false;
-	}
-
-	if (phFile) {
-		*phFile = hFile;
-	}
-	if (phFileMap) {
-		*phFileMap = hFileMap;
-	}
-	if (ppMap) {
-		*ppMap = pMap;
-	}
-
-	return true;
-}
-
 #ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
 static bool GetRealModuleDimensions(HMODULE hModule, void** ppBegin, void **ppEnd) {
-	if (!hModule) {
-		return false;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return false;
-	}
-
-	uintptr_t unBegin = reinterpret_cast<uintptr_t>(modinf.lpBaseOfDll);
-	uintptr_t unEnd = unBegin + modinf.SizeOfImage;
-
-	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(modinf.lpBaseOfDll);
-	PIMAGE_NT_HEADERS pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<char*>(pDH) + pDH->e_lfanew);
-	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
-	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
-
-	uintptr_t unLastBegin = unBegin;
-	uintptr_t unLastEnd = unEnd;
-	for (unsigned long i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		if (pFirstSection->Characteristics & (IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ)) {
-			uintptr_t unSectionBegin = unBegin + pFirstSection->VirtualAddress;
-			uintptr_t unSectionEnd = unBegin + pFirstSection->VirtualAddress + pFirstSection->Misc.VirtualSize;
-
-			//unLastBegin = max(unBegin, unSectionBegin);
-			if (unBegin > unSectionBegin) {
-				unLastBegin = unBegin;
-			}
-			else {
-				unLastBegin = unSectionBegin;
-			}
-			//unLastEnd = min(unEnd, unSectionEnd);
-			if (unEnd < unSectionEnd) {
-				unLastEnd = unEnd;
-			}
-			else {
-				unLastEnd = unSectionEnd;
-			}
-		}
-	}
-
-	if (ppBegin) {
-		*ppBegin = reinterpret_cast<void*>(unBegin);
-	}
-	if (ppEnd) {
-		*ppEnd = reinterpret_cast<void*>(unEnd);
-	}
-
-	return true;
+	return false;
 }
 #endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-static bool MapNewFile(const char* szFilePath, PHANDLE phFile, PHANDLE phFileMap, LPVOID* ppMap, DWORD dwNumberOfBytesToMap) {
-	HANDLE hFile = CreateFileA(szFilePath, GENERIC_WRITE | GENERIC_READ, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		return false;
-	}
-
-	if (SetFilePointer(hFile, dwNumberOfBytesToMap, 0, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
-		return false;
-	}
-
-	if (!SetEndOfFile(hFile)) {
-		return false;
-	}
-
-	HANDLE hFileMap = CreateFileMappingA(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
-	if (hFileMap == INVALID_HANDLE_VALUE) {
-		CloseHandle(hFile);
-		return false;
-	}
-
-	LPVOID pMap = MapViewOfFile(hFileMap, FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
-	if (!pMap) {
-		CloseHandle(hFileMap);
-		CloseHandle(hFile);
-		return false;
-	}
-
-	if (phFile) {
-		*phFile = hFile;
-	}
-	if (phFileMap) {
-		*phFileMap = hFileMap;
-	}
-	if (ppMap) {
-		*ppMap = pMap;
-	}
-
-	return true;
-}
-
-static void UnMapFile(HANDLE hFile, HANDLE hFileMap, LPVOID pMap) {
-	if (pMap) {
-		UnmapViewOfFile(pMap);
-	}
-	if (hFileMap) {
-		CloseHandle(hFileMap);
-	}
-	if (hFile) {
-		CloseHandle(hFile);
-	}
-}
 
 // RTTI Processing
 #ifdef RTTI_EXPERIMENTAL_FEATURES
@@ -413,9 +264,9 @@ static void CALLBACK RTTI_OnDLLNotification(_In_ ULONG NotificationReason, _In_ 
 // RTTI interface
 //---------------------------------------------------------------------------------
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-RTTI::RTTI(bool bAutoScanIntoCache, bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bFilesCaching) {
+RTTI::RTTI(bool bAutoScanIntoCache, bool bCaching, bool bRangeCaching, bool bModulesCaching) {
 #else // RTTI_EXPERIMENTAL_FEATURES
-RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bFilesCaching) {
+RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching) {
 #endif // !RTTI_EXPERIMENTAL_FEATURES
 	m_bAvailableSSE2 = false;
 	m_bAvailableAVX2 = false;
@@ -427,16 +278,10 @@ RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bFilesC
 	m_bCaching = bCaching;
 	m_bRangesCaching = bRangeCaching;
 	m_bModulesCaching = bModulesCaching;
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	m_bFilesCaching = bFilesCaching;
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	m_vecRangesSymbolsAddressesCache.clear();
 	m_vecModulesSymbolsAddressesCache.clear();
 	m_vecRangesSymbolsOffsetsCache.clear();
 	m_vecModulesSymbolsOffsetsCache.clear();
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	m_vecFilesSymbolsOffsetsCache.clear();
-#endif // RTTI_EXPERIMENTAL_FEATURES
 
 	int cpuinf[4];
 	__cpuid(cpuinf, 0x00000000);
@@ -483,15 +328,15 @@ RTTI::~RTTI() {
 }
 
 // Finding Pattern
-void* RTTI::FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature, uintptr_t unOffset, bool bToAbsoluteAddress) {
+void* RTTI::FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
 	if (m_bAvailableAVX2) {
-		return FindSigAVX2(pBegin, pEnd, szSignature, unOffset, bToAbsoluteAddress);
+		return FindSignatureAVX2(pBegin, pEnd, szSignature);
 	}
 	else if (m_bAvailableSSE2) {
-		return FindSigSSE2(pBegin, pEnd, szSignature, unOffset, bToAbsoluteAddress);
+		return FindSignatureSSE2(pBegin, pEnd, szSignature);
 	}
 	else {
-		return FindSigLinear(pBegin, pEnd, szSignature, unOffset, bToAbsoluteAddress);
+		return FindSignatureNative(pBegin, pEnd, szSignature);
 	}
 }
 
@@ -499,76 +344,6 @@ void* RTTI::FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const 
 void* RTTI::FindTypeInfoAddressFromRange(void* pBegin, void* pEnd) {
 	return FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), ".?AVtype_info@@");
 }
-
-uintptr_t RTTI::FindTypeInfoOffsetFromRange(void* pBegin, void* pEnd) {
-	return reinterpret_cast<uintptr_t>(FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), ".?AVtype_info@@")) - reinterpret_cast<uintptr_t>(pBegin);
-}
-
-void* RTTI::FindTypeInfoAddressFromModule(HMODULE hModule) {
-	if (!hModule) {
-		return nullptr;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return nullptr;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindTypeInfoAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd);
-}
-
-uintptr_t RTTI::FindTypeInfoOffsetFromModule(HMODULE hModule) {
-	if (!hModule) {
-		return 0;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return 0;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindTypeInfoOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-uintptr_t RTTI::FindTypeInfoOffsetFromFile(const char* szModulePath) {
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	uintptr_t unResult = 0;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		unResult = FindTypeInfoOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize));
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return unResult;
-}
-#endif
 
 // Finding references (32 - bits)
 //  One

@@ -56,14 +56,8 @@ typedef std::tuple<std::string, uintptr_t> SymbolOffset; // <symbol>:<address/of
 typedef std::vector<SymbolOffset> vecSymbolsOffsets; // <symbols>
 typedef std::tuple<RangeOfDataForRTII, vecSymbolsOffsets> RangeSymbolsOffsets; // <range>
 typedef std::tuple<HMODULE, vecSymbolsOffsets> ModuleSymbolsOffsets; // <module>
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-typedef std::tuple<std::string, vecSymbolsOffsets> FileSymbolsOffsets; // <file>
-#endif // RTTI_EXPERIMENTAL_FEATURES
 typedef std::vector<RangeSymbolsOffsets> vecRangesSymbolsOffsets, *pvecRangesSymbolsOffsets; // <ranges>
 typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, *pvecModulesSymbolsOffsets; // <modules>
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-typedef std::vector<FileSymbolsOffsets> vecFilesSymbolsOffsets, *pvecFilesSymbolsOffsets; // <files>
-#endif // RTTI_EXPERIMENTAL_FEATURES
 
 //---------------------------------------------------------------------------------
 // RTTI interface
@@ -71,23 +65,17 @@ typedef std::vector<FileSymbolsOffsets> vecFilesSymbolsOffsets, *pvecFilesSymbol
 class RTTI {
 public:
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bAutoScanIntoCache = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bFilesCaching = false);
+	RTTI(bool bAutoScanIntoCache = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
 #else // RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bFilesCaching = false);
+	RTTI(bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
 #endif // !RTTI_EXPERIMENTAL_FEATURES
 	~RTTI();
 private:
 	// Finding Pattern
-	void* FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature, uintptr_t unOffset = 0, bool bToAbsoluteAddress = false);
+	void* FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature);
 private:
 	// Finding TypeInfo
 	void* FindTypeInfoAddressFromRange(void* pBegin, void* pEnd);
-	uintptr_t FindTypeInfoOffsetFromRange(void* pBegin, void* pEnd);
-	void* FindTypeInfoAddressFromModule(HMODULE hModule);
-	uintptr_t FindTypeInfoOffsetFromModule(HMODULE hModule);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	uintptr_t FindTypeInfoOffsetFromFile(const char* szModulePath);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 private:
 	// Finding references (32 - bits)
 	//  One
@@ -95,34 +83,22 @@ private:
 	uintptr_t FindReferenceOffsetFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
 	void* FindReferenceAddressFromModule32(HMODULE hModule, unsigned int unValue);
 	uintptr_t FindReferenceOffsetFromModule32(HMODULE hModule, unsigned int unValue);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	uintptr_t FindReferenceOffsetFromFile32(const char* szModulePath, unsigned int unValue);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	//  Multiple
 	std::vector<void*> FindReferencesAddressesFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
 	std::vector<uintptr_t> FindReferencesOffsetsFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
 	std::vector<void*> FindReferencesAddressesFromModule32(HMODULE hModule, unsigned int unValue);
 	std::vector<uintptr_t> FindReferencesOffsetsFromModule32(HMODULE hModule, unsigned int unValue);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	std::vector<uintptr_t> FindReferencesOffsetsFromFile32(const char* szModulePath, unsigned int unValue);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	// Finding references (64 - bits)
 	//  One
 	void* FindReferenceAddressFromRange(void* pBegin, void* pEnd, void* pValue);
 	uintptr_t FindReferenceOffsetFromRange(void* pBegin, void* pEnd, void* pValue);
 	void* FindReferenceAddressFromModule(HMODULE hModule, void* pValue);
 	uintptr_t FindReferenceOffsetFromModule(HMODULE hModule, void* pValue);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	uintptr_t FindReferenceOffsetFromFile(const char* szModulePath, void* pValue);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	//  Multiple
 	std::vector<void*> FindReferencesAddressesFromRange(void* pBegin, void* pEnd, void* pValue);
 	std::vector<uintptr_t> FindReferencesOffsetsFromRange(void* pBegin, void* pEnd, void* pValue);
 	std::vector<void*> FindReferencesAddressesFromModule(HMODULE hModule, void* pValue);
 	std::vector<uintptr_t> FindReferencesOffsetsFromModule(HMODULE hModule, void* pValue);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	std::vector<uintptr_t> FindReferencesOffsetsFromFile(const char* szModulePath, void* pValue);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 public:
 	// Finding VTables
 	//  Multiple
@@ -130,26 +106,17 @@ public:
 	vecSymbolsOffsets GetVTablesOffsetsFromRange(void* pBegin, void* pEnd);
 	vecSymbolsAddresses GetVTablesAddressesFromModule(HMODULE hModule);
 	vecSymbolsOffsets GetVTablesOffsetsFromModule(HMODULE hModule);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	vecSymbolsOffsets GetVTablesOffsetsFromFile(const char* szModulePath);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	//  One
 	void* GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	uintptr_t GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModule(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	uintptr_t GetVTableOffsetFromFile(const char* szModulePath, const char* szClassName);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 private:
 	// Finding in cache
 	void* GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char* szClassName);
 	uintptr_t GetVTableOffsetFromRangeCache(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModuleCache(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szClassName);
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	uintptr_t GetVTableOffsetFromFileCache(const char* szModulePath, const char* szClassName);
-#endif // RTTI_EXPERIMENTAL_FEATURES
 public:
 	// For processing
 	bool IsCacheEnabled();
@@ -158,7 +125,6 @@ public:
 	pvecModulesSymbolsAddresses GetModulesAddressesCache();
 	pvecRangesSymbolsOffsets GetRangesOffsetsCache();
 	pvecModulesSymbolsOffsets GetModulesOffsetsCache();
-	pvecFilesSymbolsOffsets GetFilesOffsetsCache();
 #endif // RTTI_EXPERIMENTAL_FEATURES
 private:
 	bool m_bAvailableSSE2;
@@ -171,15 +137,11 @@ private:
 	bool m_bCaching;
 	bool m_bRangesCaching;
 	bool m_bModulesCaching;
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	bool m_bFilesCaching;
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	vecRangesSymbolsAddresses m_vecRangesSymbolsAddressesCache;
 	vecModulesSymbolsAddresses m_vecModulesSymbolsAddressesCache;
 	vecRangesSymbolsOffsets m_vecRangesSymbolsOffsetsCache;
 	vecModulesSymbolsOffsets m_vecModulesSymbolsOffsetsCache;
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-	vecFilesSymbolsOffsets m_vecFilesSymbolsOffsetsCache;
 public:
 	// For processing
 	std::vector<HANDLE> m_vecThreads;
