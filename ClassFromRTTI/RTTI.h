@@ -65,52 +65,29 @@ typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, *pvecModules
 class RTTI {
 public:
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bAutoScanIntoCache = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
+	RTTI(bool bAutoScanIntoCache = false, bool bMinIterations = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
 #else // RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
+	RTTI(bool bMinIterations = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
 #endif // !RTTI_EXPERIMENTAL_FEATURES
 	~RTTI();
 private:
 	// Finding Pattern
-	void* FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature);
+	void* FindSignature(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature);
 private:
 	// Finding TypeInfo
 	void* FindTypeInfoAddressFromRange(void* pBegin, void* pEnd);
-private:
-	// Finding references (32 - bits)
-	//  One
-	void* FindReferenceAddressFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
-	uintptr_t FindReferenceOffsetFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
-	void* FindReferenceAddressFromModule32(HMODULE hModule, unsigned int unValue);
-	uintptr_t FindReferenceOffsetFromModule32(HMODULE hModule, unsigned int unValue);
-	//  Multiple
-	std::vector<void*> FindReferencesAddressesFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
-	std::vector<uintptr_t> FindReferencesOffsetsFromRange32(void* pBegin, void* pEnd, unsigned int unValue);
-	std::vector<void*> FindReferencesAddressesFromModule32(HMODULE hModule, unsigned int unValue);
-	std::vector<uintptr_t> FindReferencesOffsetsFromModule32(HMODULE hModule, unsigned int unValue);
-	// Finding references (64 - bits)
-	//  One
-	void* FindReferenceAddressFromRange(void* pBegin, void* pEnd, void* pValue);
-	uintptr_t FindReferenceOffsetFromRange(void* pBegin, void* pEnd, void* pValue);
-	void* FindReferenceAddressFromModule(HMODULE hModule, void* pValue);
-	uintptr_t FindReferenceOffsetFromModule(HMODULE hModule, void* pValue);
-	//  Multiple
-	std::vector<void*> FindReferencesAddressesFromRange(void* pBegin, void* pEnd, void* pValue);
-	std::vector<uintptr_t> FindReferencesOffsetsFromRange(void* pBegin, void* pEnd, void* pValue);
-	std::vector<void*> FindReferencesAddressesFromModule(HMODULE hModule, void* pValue);
-	std::vector<uintptr_t> FindReferencesOffsetsFromModule(HMODULE hModule, void* pValue);
 public:
 	// Finding VTables
-	//  Multiple
-	vecSymbolsAddresses GetVTablesAddressesFromRange(void* pBegin, void* pEnd);
-	vecSymbolsOffsets GetVTablesOffsetsFromRange(void* pBegin, void* pEnd);
-	vecSymbolsAddresses GetVTablesAddressesFromModule(HMODULE hModule);
-	vecSymbolsOffsets GetVTablesOffsetsFromModule(HMODULE hModule);
 	//  One
 	void* GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	uintptr_t GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModule(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName);
+	//  Multiple
+	vecSymbolsAddresses GetVTablesAddressesFromRange(void* pBegin, void* pEnd);
+	vecSymbolsOffsets GetVTablesOffsetsFromRange(void* pBegin, void* pEnd);
+	vecSymbolsAddresses GetVTablesAddressesFromModule(HMODULE hModule);
+	vecSymbolsOffsets GetVTablesOffsetsFromModule(HMODULE hModule);
 private:
 	// Finding in cache
 	void* GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char* szClassName);
@@ -134,6 +111,7 @@ private:
 	void* m_pLdrUnregisterDllNotification;
 	PVOID m_pCookie;
 #endif // RTTI_EXPERIMENTAL_FEATURES
+	bool m_bMinIterations;
 	bool m_bCaching;
 	bool m_bRangesCaching;
 	bool m_bModulesCaching;

@@ -31,28 +31,74 @@ typedef NTSTATUS(NTAPI* fnLdrUnregisterDllNotification)(_In_ PVOID Cookie);
 #endif // RTTI_EXPERIMENTAL_FEATURES
 
 typedef struct _TYPEDESCRIPTOR {
-	void* pVFTable;
+	void* pVTable;
 	void* pSpare;
 	char Name;
 } TYPEDESCRIPTOR, *PTYPEDESCRIPTOR;
 
+int CompareByteArray(PBYTE ByteArray1, PCHAR ByteArray2, PCHAR Mask, DWORD Length)
+{
+	DWORD nextStart = 0;
+	char start = ByteArray2[0];
+	for (DWORD i = 0; i < Length; i++)
+	{
+		if (Mask[i] == '?')
+		{
+			continue;
+		}
+		if (ByteArray1[i] == start)
+		{
+			nextStart = i;
+		}
+		if (ByteArray1[i] != (BYTE)ByteArray2[i])
+		{
+			return nextStart;
+		}
+	}
+	return -1;
+}
+
+PBYTE FindSignature(LPVOID BaseAddress, DWORD ImageSize, PCHAR Signature, PCHAR Mask)
+{
+	PBYTE Address = NULL;
+	PBYTE Buffer = (PBYTE)BaseAddress;
+
+	DWORD Length = strlen(Mask);
+
+	for (DWORD i = 0; i < (ImageSize - Length); i++)
+	{
+		int result = CompareByteArray((Buffer + i), Signature, Mask, Length);
+		if (result < 0)
+		{
+			Address = (PBYTE)BaseAddress + i;
+			break;
+		}
+		else
+		{
+			i += result;
+		}
+	}
+
+	return Address;
+}
+
 // Helpful functions
 static void* FindSignatureNative(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
 	const size_t unSignatureLength = strlen(reinterpret_cast<const char*>(szSignature));
-
-	for (uintptr_t i = 0; i < reinterpret_cast<uintptr_t>(pEnd); i++, pBegin++) {
+	const uintptr_t unEnd = reinterpret_cast<uintptr_t>(pEnd) - unSignatureLength;
+	for (uintptr_t i = 0; (i < reinterpret_cast<uintptr_t>(pEnd)) && (pBegin <= reinterpret_cast<void*>(unEnd)); ++i, ++pBegin) {
 		uintptr_t unNextStart = 0;
 		uintptr_t unResult = 0;
 		bool bSuccess = true;
-		for (size_t j = 0; j < unSignatureLength; j++) {
+		for (size_t j = 0; j < unSignatureLength; ++j) {
 			if (reinterpret_cast<const unsigned char*>(szSignature)[j] == 0x2A) {
 				continue;
 			}
-			unsigned char ucSymbol = pBegin[j];
-			if (ucSymbol == reinterpret_cast<const unsigned char*>(szSignature)[0]) {
+			const unsigned char unSymbol = pBegin[j];
+			if (unSymbol == reinterpret_cast<const unsigned char*>(szSignature)[0]) {
 				unNextStart = j;
 			}
-			if (ucSymbol != reinterpret_cast<const unsigned char*>(szSignature)[j]) {
+			if (unSymbol != reinterpret_cast<const unsigned char*>(szSignature)[j]) {
 				unResult = unNextStart;
 				bSuccess = false;
 				break;
@@ -65,7 +111,6 @@ static void* FindSignatureNative(unsigned char* pBegin, const unsigned char* pEn
 			i += unResult;
 		}
 	}
-
 	return nullptr;
 }
 
@@ -140,12 +185,6 @@ static void* FindSignatureAVX2(unsigned char* pBegin, const unsigned char* pEnd,
 
 	return nullptr;
 }
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-static bool GetRealModuleDimensions(HMODULE hModule, void** ppBegin, void **ppEnd) {
-	return false;
-}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 // RTTI Processing
 #ifdef RTTI_EXPERIMENTAL_FEATURES
@@ -260,13 +299,34 @@ static void CALLBACK RTTI_OnDLLNotification(_In_ ULONG NotificationReason, _In_ 
 }
 #endif // RTTI_EXPERIMENTAL_FEATURES
 
+#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
+static void GetRealModuleDimensions(void** ppBegin, void **ppEnd) {
+	void* pBegin = *ppBegin;
+	void* pEnd = *ppEnd;
+
+	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pBegin);
+	PIMAGE_NT_HEADERS pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<char*>(pDH) + pDH->e_lfanew);
+	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
+	PIMAGE_OPTIONAL_HEADER pOH = &(pNTHs->OptionalHeader);
+	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
+	for (unsigned long i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
+		void* pSectionBegin = reinterpret_cast<char*>(pDH) + pFirstSection->VirtualAddress;
+		void* pSectionEnd = reinterpret_cast<char*>(pBegin) + pFirstSection->Misc.VirtualSize;
+		if (strncmp(reinterpret_cast<char*>(&(pFirstSection->Name)), ".rdata", 8) == 0) {
+			pBegin = pSectionBegin;
+			pEnd = pSectionEnd;
+		}
+	}
+}
+#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
+
 //---------------------------------------------------------------------------------
 // RTTI interface
 //---------------------------------------------------------------------------------
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-RTTI::RTTI(bool bAutoScanIntoCache, bool bCaching, bool bRangeCaching, bool bModulesCaching) {
+RTTI::RTTI(bool bAutoScanIntoCache, bool bMinIterations, bool bCaching, bool bRangeCaching, bool bModulesCaching) {
 #else // RTTI_EXPERIMENTAL_FEATURES
-RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching) {
+RTTI::RTTI(bool bMinIterations, bool bCaching, bool bRangeCaching, bool bModulesCaching) {
 #endif // !RTTI_EXPERIMENTAL_FEATURES
 	m_bAvailableSSE2 = false;
 	m_bAvailableAVX2 = false;
@@ -275,6 +335,7 @@ RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching) {
 	m_pLdrUnregisterDllNotification = nullptr;
 	m_pCookie = nullptr;
 #endif // RTTI_EXPERIMENTAL_FEATURES
+	m_bMinIterations = bMinIterations;
 	m_bCaching = bCaching;
 	m_bRangesCaching = bRangeCaching;
 	m_bModulesCaching = bModulesCaching;
@@ -327,8 +388,8 @@ RTTI::~RTTI() {
 #endif // RTTI_EXPERIMENTAL_FEATURES
 }
 
-// Finding Pattern
-void* RTTI::FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
+// Finding Signature
+void* RTTI::FindSignature(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature) {
 	if (m_bAvailableAVX2) {
 		return FindSignatureAVX2(pBegin, pEnd, szSignature);
 	}
@@ -342,450 +403,29 @@ void* RTTI::FindPattern(unsigned char* pBegin, const unsigned char* pEnd, const 
 
 // Finding TypeInfo
 void* RTTI::FindTypeInfoAddressFromRange(void* pBegin, void* pEnd) {
-	return FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), ".?AVtype_info@@");
+	// Prevention from self-analysing.
+	char szEncodedPattern[] = { '\xD1', '\xC0', '\xBE', '\xA9', '\x8B', '\x86', '\x8F', '\x9A', '\xA0', '\x96', '\x91', '\x99', '\x90', '\xBF', '\xBF' }; // ".?AVtype_info@@"
+	char szPattern[sizeof(szEncodedPattern) + 1];
+	memset(szPattern, 0, sizeof(szPattern));
+	for (unsigned char i = 0; i < (sizeof(szPattern) - 1); ++i) {
+		szPattern[i] = szEncodedPattern[i] ^ 0xFF;
+	}
+	return FindSignature(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szPattern);
 }
-
-// Finding references (32 - bits)
-//  One
-void* RTTI::FindReferenceAddressFromRange32(void* pBegin, void* pEnd, unsigned int unValue) {
-	char szValue[sizeof(unValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&unValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	return FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-}
-
-uintptr_t RTTI::FindReferenceOffsetFromRange32(void* pBegin, void* pEnd, unsigned int unValue) {
-	char szValue[sizeof(unValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&unValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	return reinterpret_cast<uintptr_t>(FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue)) - reinterpret_cast<uintptr_t>(pBegin);
-}
-
-void* RTTI::FindReferenceAddressFromModule32(HMODULE hModule, unsigned int unValue) {
-	if (!hModule) {
-		return nullptr;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return nullptr;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferenceAddressFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
-}
-
-uintptr_t RTTI::FindReferenceOffsetFromModule32(HMODULE hModule, unsigned int unValue) {
-	if (!hModule) {
-		return 0;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return 0;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferenceOffsetFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-uintptr_t RTTI::FindReferenceOffsetFromFile32(const char* szModulePath, unsigned int unValue) {
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	uintptr_t unResult = 0;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		unResult = FindReferenceOffsetFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize), unValue);
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return unResult;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
-//  Multiple
-std::vector<void*> RTTI::FindReferencesAddressesFromRange32(void* pBegin, void* pEnd, unsigned int unValue) {
-	std::vector<void*> vecData;
-	char szValue[sizeof(unValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&unValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	void* pLastAddress = pBegin;
-	while (pLastAddress < pEnd) {
-		void* pAddress = FindPattern(reinterpret_cast<unsigned char*>(pLastAddress), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-		if (!pAddress) {
-			break;
-		}
-		vecData.push_back(pAddress);
-		pLastAddress = reinterpret_cast<void*>(reinterpret_cast<char*>(pAddress) + 1);
-	}
-	return vecData;
-}
-
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromRange32(void* pBegin, void* pEnd, unsigned int unValue) {
-	std::vector<uintptr_t> vecData;
-	char szValue[sizeof(unValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&unValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	void* pLastAddress = pBegin;
-	while (pLastAddress < pEnd) {
-		void* pAddress = FindPattern(reinterpret_cast<unsigned char*>(pLastAddress), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-		if (!pAddress) {
-			break;
-		}
-		vecData.push_back(reinterpret_cast<uintptr_t>(pAddress) - reinterpret_cast<uintptr_t>(pBegin));
-		pLastAddress = reinterpret_cast<void*>(reinterpret_cast<char*>(pAddress) + 1);
-	}
-	return vecData;
-}
-
-std::vector<void*> RTTI::FindReferencesAddressesFromModule32(HMODULE hModule, unsigned int unValue) {
-	std::vector<void*> vecData;
-
-	if (!hModule) {
-		return vecData;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return vecData;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferencesAddressesFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
-}
-
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule32(HMODULE hModule, unsigned int unValue) {
-	std::vector<uintptr_t> vecData;
-
-	if (!hModule) {
-		return vecData;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return vecData;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferencesOffsetsFromRange32(reinterpret_cast<void*>(pBegin), pEnd, unValue);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromFile32(const char* szModulePath, unsigned int unValue) {
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	std::vector<uintptr_t> vecData;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		vecData = FindReferencesOffsetsFromRange32(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize), unValue);
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return vecData;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
-// Finding references (64 - bits)
-//  One
-void* RTTI::FindReferenceAddressFromRange(void* pBegin, void* pEnd, void* pValue) {
-	char szValue[sizeof(pValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&pValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	return FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-}
-
-uintptr_t RTTI::FindReferenceOffsetFromRange(void* pBegin, void* pEnd, void* pValue) {
-	char szValue[sizeof(pValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&pValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	return reinterpret_cast<uintptr_t>(FindPattern(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue)) - reinterpret_cast<uintptr_t>(pBegin);
-}
-
-void* RTTI::FindReferenceAddressFromModule(HMODULE hModule, void* pValue) {
-	if (!hModule) {
-		return nullptr;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return nullptr;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferenceAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
-}
-
-uintptr_t RTTI::FindReferenceOffsetFromModule(HMODULE hModule, void* pValue) {
-	if (!hModule) {
-		return 0;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return 0;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferenceOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-uintptr_t RTTI::FindReferenceOffsetFromFile(const char* szModulePath, void* pValue) {
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	uintptr_t unResult = 0;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		unResult = FindReferenceOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize), pValue);
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return unResult;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
-//  Multiple
-std::vector<void*> RTTI::FindReferencesAddressesFromRange(void* pBegin, void* pEnd, void* pValue) {
-	std::vector<void*> vecData;
-	char szValue[sizeof(pValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&pValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	void* pLastAddress = pBegin;
-	while (pLastAddress < pEnd) {
-		void* pAddress = FindPattern(reinterpret_cast<unsigned char*>(pLastAddress), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-		if (!pAddress) {
-			break;
-		}
-		vecData.push_back(pAddress);
-		pLastAddress = reinterpret_cast<void*>(reinterpret_cast<char*>(pAddress) + 1);
-	}
-	return vecData;
-}
-
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromRange(void* pBegin, void* pEnd, void* pValue) {
-	std::vector<uintptr_t> vecData;
-	char szValue[sizeof(pValue) + 1];
-	memset(szValue, 0, sizeof(szValue));
-	for (unsigned char i = 0; i < (sizeof(szValue) - 1); ++i) {
-		char ch = reinterpret_cast<char*>(&pValue)[i];
-		if (ch == '\x00') {
-			ch = '\x2A';
-		}
-		szValue[i] = ch;
-	}
-	void* pLastAddress = pBegin;
-	while (pLastAddress < pEnd) {
-		void* pAddress = FindPattern(reinterpret_cast<unsigned char*>(pLastAddress), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szValue);
-		if (!pAddress) {
-			break;
-		}
-		vecData.push_back(reinterpret_cast<uintptr_t>(pAddress) - reinterpret_cast<uintptr_t>(pBegin));
-		pLastAddress = reinterpret_cast<void*>(reinterpret_cast<char*>(pAddress) + 1);
-	}
-	return vecData;
-}
-
-std::vector<void*> RTTI::FindReferencesAddressesFromModule(HMODULE hModule, void* pValue) {
-	std::vector<void*> vecData;
-
-	if (!hModule) {
-		return vecData;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return vecData;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferencesAddressesFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
-}
-
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromModule(HMODULE hModule, void* pValue) {
-	std::vector<uintptr_t> vecData;
-
-	if (!hModule) {
-		return vecData;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return vecData;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return FindReferencesOffsetsFromRange(reinterpret_cast<void*>(pBegin), pEnd, pValue);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-std::vector<uintptr_t> RTTI::FindReferencesOffsetsFromFile(const char* szModulePath, void* pValue) {
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	std::vector<uintptr_t> vecData;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		vecData = FindReferencesOffsetsFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize), pValue);
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return vecData;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
 
 // Finding VTables
-//  Multiple
-vecSymbolsAddresses RTTI::GetVTablesAddressesFromRange(void* pBegin, void* pEnd) {
-	vecSymbolsAddresses vecData;
-
+//  One
+void* RTTI::GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName) {
 	if (m_bCaching && m_bRangesCaching) {
-		for (vecRangesSymbolsAddresses::iterator it = m_vecRangesSymbolsAddressesCache.begin(); it != m_vecRangesSymbolsAddressesCache.end(); ++it) {
-			RangeOfDataForRTII& rangeData = std::get<0>(*it);
-			void*& pcBegin = std::get<0>(rangeData);
-			void*& pcEnd = std::get<1>(rangeData);
-			if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
-				return std::get<1>(*it);
-			}
+		void* pResult = GetVTableAddressFromRangeCache(pBegin, pEnd, szClassName);
+		if (pResult) {
+			return pResult;
 		}
 	}
 
 	void* pTypeInfo = FindTypeInfoAddressFromRange(pBegin, pEnd);
 	if (!pTypeInfo) {
-		return vecData;
+		return 0;
 	}
 
 	PTYPEDESCRIPTOR pTypeDesc = reinterpret_cast<PTYPEDESCRIPTOR>(reinterpret_cast<char*>(pTypeInfo) - (sizeof(void*) * 2));
@@ -793,35 +433,94 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromRange(void* pBegin, void* pEnd)
 	std::unique_ptr<char[]> mem_szSymbolBuffer(new char[RTTI_DEFAULT_MAX_SYMBOL_LENGTH]); // 0x7FF - Max for MSVC
 	char* szSymbolBuffer = mem_szSymbolBuffer.get();
 	if (!szSymbolBuffer) {
-		return vecData;
+		return 0;
 	}
 	memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
 
-	std::vector<void*> vecTypes = FindReferencesAddressesFromRange(pBegin, pEnd, pTypeDesc->pVFTable);
-	for (std::vector<void*>::iterator ittype = vecTypes.begin(); ittype != vecTypes.end(); ++ittype) {
-		void* pType = reinterpret_cast<void*>(*ittype);
+	// Converting
+	char szVTable[sizeof(void*) + 1];
+	memset(szVTable, 0, sizeof(szVTable));
+	for (unsigned char i = 0; i < sizeof(void*); ++i) {
+		char cByte = reinterpret_cast<char*>(&(pTypeDesc->pVTable))[i];
+		if (cByte == '\x00') {
+			cByte = '\x2A';
+		}
+		szVTable[i] = cByte;
+	}
+
+	// Finding
+	void* pLastType = pBegin;
+	while (pLastType < pEnd) {
+		void* pType = FindSignature(reinterpret_cast<unsigned char*>(pLastType), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szVTable);
+		if (!pType) {
+			break;
+		}
+
+		// Converting
 #ifdef _WIN64
-		unsigned long long unTypeOffsetTemp = reinterpret_cast<unsigned long long>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
-		unsigned long unTypeOffset = *(reinterpret_cast<unsigned long*>(&unTypeOffsetTemp));
-		std::vector<void*> vecReferences = FindReferencesAddressesFromRange32(pBegin, pEnd, unTypeOffset);
+		uintptr_t unTypeOffsetTemp = reinterpret_cast<uintptr_t>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
+		unsigned int unTypeOffset = (*(reinterpret_cast<unsigned int*>(&unTypeOffsetTemp)));
+
+		char szTypeOffset[sizeof(int) + 1];
+		memset(szTypeOffset, 0, sizeof(szTypeOffset));
+		for (unsigned char i = 0; i < sizeof(int); ++i) {
+			char cByte = reinterpret_cast<char*>(&unTypeOffset)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szTypeOffset[i] = cByte;
+		}
 #elif _WIN32
-		std::vector<void*> vecReferences = FindReferencesAddressesFromRange(pBegin, pEnd, pType);
+		char szType[sizeof(void*) + 1];
+		memset(szType, 0, sizeof(szType));
+		for (unsigned char i = 0; i < sizeof(void*); ++i) {
+			char cByte = reinterpret_cast<char*>(&pType)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szType[i] = cByte;
+		}
 #endif
-		for (std::vector<void*>::iterator itreference = vecReferences.begin(); itreference != vecReferences.end(); ++itreference) {
-			void* pReference = reinterpret_cast<void*>(*itreference);
+
+		// Finding
+		void* pLastReference = pBegin;
+		while (pLastReference < pEnd) {
+#ifdef _WIN64
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szTypeOffset);
+#elif _WIN32
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szType);
+#endif
+			if (!pReference) {
+				break;
+			}
+
 #ifdef _WIN64
 			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) != 0) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) != 0)))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 #elif _WIN32
 			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) >= reinterpret_cast<unsigned long>(pBegin)) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) >= reinterpret_cast<unsigned long>(pBegin))))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 #endif
 
 			void* pLocation = reinterpret_cast<unsigned char*>(pReference) - (sizeof(unsigned long) * 3);
-			void* pMeta = FindReferenceAddressFromRange(pBegin, pEnd, pLocation);
+
+			char szLocation[sizeof(void*) + 1];
+			memset(szLocation, 0, sizeof(szLocation));
+			for (unsigned char i = 0; i < sizeof(void*); ++i) {
+				char cByte = reinterpret_cast<char*>(&pLocation)[i];
+				if (cByte == '\x00') {
+					cByte = '\x2A';
+				}
+				szLocation[i] = cByte;
+			}
+
+			void* pMeta = FindSignature(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szLocation);
 			if (!pMeta) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 
@@ -850,21 +549,557 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromRange(void* pBegin, void* pEnd)
 
 			size_t unSymbolBufferLength = strnlen_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1);
 
-			void* pPattern1 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "::`vftable'");
+			void* pPattern1 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`anonymous namespace'");
 			if (pPattern1) {
-				szSymbolBuffer[unSymbolBufferLength - 11] = 0;
-			}
-			void* pPattern2 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "const ");
-			if (pPattern2) {
-				szSymbolBuffer[unSymbolBufferLength - 6] = 0;
-			}
-			void* pPattern3 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "::`anonymous namespace'");
-			if (pPattern3) {
-				szSymbolBuffer[unSymbolBufferLength - 23] = 0;
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern1) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 24);
 			}
 
-			vecData.push_back(SymbolAddress(szSymbolBuffer, reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*))));
+			void* pPattern2 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`vftable'");
+			if (pPattern2) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern2) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 12);
+			}
+
+			void* pPattern3 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "const ");
+			if (pPattern3) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern3) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 7);
+			}
+
+			if (strcmp(szSymbolBuffer, szClassName) != 0) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+
+			void* pAddress = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*));
+
+			if (m_bCaching && m_bRangesCaching) {
+				bool bExistsRange = false;
+				for (vecRangesSymbolsAddresses::iterator it = m_vecRangesSymbolsAddressesCache.begin(); it != m_vecRangesSymbolsAddressesCache.end(); ++it) {
+					RangeOfDataForRTII& dataRange = std::get<0>(*it);
+					void*& pcBegin = std::get<0>(dataRange);
+					void*& pcEnd = std::get<1>(dataRange);
+					if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+						bExistsRange = true;
+						vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
+						bool bExistsSymbol = false;
+						for (vecSymbolsAddresses::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
+							void*& psAddress = std::get<1>(*sit);
+							if (pAddress == psAddress) {
+								bExistsSymbol = true;
+							}
+						}
+						if (!bExistsSymbol) {
+							vecSymbols.push_back(SymbolAddress(szSymbolBuffer, pAddress));
+						}
+					}
+				}
+				if (!bExistsRange) {
+					vecSymbolsAddresses vecSymbols;
+					vecSymbols.push_back(SymbolAddress(szSymbolBuffer, pAddress));
+					m_vecRangesSymbolsAddressesCache.push_back(RangeSymbolsAddresses(RangeOfDataForRTII(pBegin, pEnd), vecSymbols));
+				}
+			}
+
+			return pAddress;
 		}
+
+		pLastType = reinterpret_cast<void*>(reinterpret_cast<char*>(pType) + sizeof(void*));
+	}
+
+	return nullptr;
+}
+
+uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName) {
+	if (m_bCaching && m_bRangesCaching) {
+		uintptr_t unResult = GetVTableOffsetFromRangeCache(pBegin, pEnd, szClassName);
+		if (unResult) {
+			return unResult;
+		}
+	}
+
+	void* pTypeInfo = FindTypeInfoAddressFromRange(pBegin, pEnd);
+	if (!pTypeInfo) {
+		return 0;
+	}
+
+	PTYPEDESCRIPTOR pTypeDesc = reinterpret_cast<PTYPEDESCRIPTOR>(reinterpret_cast<char*>(pTypeInfo) - (sizeof(void*) * 2));
+
+	std::unique_ptr<char[]> mem_szSymbolBuffer(new char[RTTI_DEFAULT_MAX_SYMBOL_LENGTH]); // 0x7FF - Max for MSVC
+	char* szSymbolBuffer = mem_szSymbolBuffer.get();
+	if (!szSymbolBuffer) {
+		return 0;
+	}
+	memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
+
+	// Converting
+	char szVTable[sizeof(void*) + 1];
+	memset(szVTable, 0, sizeof(szVTable));
+	for (unsigned char i = 0; i < sizeof(void*); ++i) {
+		char cByte = reinterpret_cast<char*>(&(pTypeDesc->pVTable))[i];
+		if (cByte == '\x00') {
+			cByte = '\x2A';
+		}
+		szVTable[i] = cByte;
+	}
+
+	// Finding
+	void* pLastType = pBegin;
+	while (pLastType < pEnd) {
+		void* pType = FindSignature(reinterpret_cast<unsigned char*>(pLastType), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szVTable);
+		if (!pType) {
+			break;
+		}
+
+		// Converting
+#ifdef _WIN64
+		uintptr_t unTypeOffsetTemp = reinterpret_cast<uintptr_t>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
+		unsigned int unTypeOffset = (*(reinterpret_cast<unsigned int*>(&unTypeOffsetTemp)));
+
+		char szTypeOffset[sizeof(int) + 1];
+		memset(szTypeOffset, 0, sizeof(szTypeOffset));
+		for (unsigned char i = 0; i < sizeof(int); ++i) {
+			char cByte = reinterpret_cast<char*>(&unTypeOffset)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szTypeOffset[i] = cByte;
+		}
+#elif _WIN32
+		char szType[sizeof(void*) + 1];
+		memset(szType, 0, sizeof(szType));
+		for (unsigned char i = 0; i < sizeof(void*); ++i) {
+			char cByte = reinterpret_cast<char*>(&pType)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szType[i] = cByte;
+		}
+#endif
+
+		// Finding
+		void* pLastReference = pBegin;
+		while (pLastReference < pEnd) {
+#ifdef _WIN64
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szTypeOffset);
+#elif _WIN32
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szType);
+#endif
+			if (!pReference) {
+				break;
+			}
+
+#ifdef _WIN64
+			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) != 0) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) != 0)))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+#elif _WIN32
+			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) >= reinterpret_cast<unsigned long>(pBegin)) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) >= reinterpret_cast<unsigned long>(pBegin))))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+#endif
+
+			void* pLocation = reinterpret_cast<unsigned char*>(pReference) - (sizeof(unsigned long) * 3);
+
+			char szLocation[sizeof(void*) + 1];
+			memset(szLocation, 0, sizeof(szLocation));
+			for (unsigned char i = 0; i < sizeof(void*); ++i) {
+				char cByte = reinterpret_cast<char*>(&pLocation)[i];
+				if (cByte == '\x00') {
+					cByte = '\x2A';
+				}
+				szLocation[i] = cByte;
+			}
+
+			void* pMeta = FindSignature(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szLocation);
+			if (!pMeta) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+
+			PTYPEDESCRIPTOR pTypeDescriptor = reinterpret_cast<PTYPEDESCRIPTOR>(pType);
+			char* pSymbol = &(pTypeDescriptor->Name);
+
+			char* pNewSymbol = pSymbol;
+			if (pSymbol[4] == '?') {
+				pNewSymbol = pSymbol + 1;
+			}
+			else if (pSymbol[0] == '.') {
+				pNewSymbol = pSymbol + 4;
+			}
+			else if (pSymbol[0] == '?') {
+				pNewSymbol = pSymbol + 2;
+			}
+			else {
+				break;
+			}
+
+			memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
+			sprintf_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH, "??_7%s6B@", pNewSymbol);
+			if (!((UnDecorateSymbolName(szSymbolBuffer, szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1, UNDNAME_NAME_ONLY | UNDNAME_NO_SPECIAL_SYMS)) != 0)) {
+				break;
+			}
+
+			size_t unSymbolBufferLength = strnlen_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1);
+
+			void* pPattern1 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`anonymous namespace'");
+			if (pPattern1) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern1) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 24);
+			}
+
+			void* pPattern2 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`vftable'");
+			if (pPattern2) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern2) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 12);
+			}
+
+			void* pPattern3 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "const ");
+			if (pPattern3) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern3) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 7);
+			}
+
+			if (strcmp(szSymbolBuffer, szClassName) != 0) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+
+			uintptr_t unOffset = reinterpret_cast<uintptr_t>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*) - reinterpret_cast<uintptr_t>(pBegin));
+
+			if (m_bCaching && m_bRangesCaching) {
+				bool bExistsRange = false;
+				for (vecRangesSymbolsOffsets::iterator it = m_vecRangesSymbolsOffsetsCache.begin(); it != m_vecRangesSymbolsOffsetsCache.end(); ++it) {
+					RangeOfDataForRTII& dataRange = std::get<0>(*it);
+					void*& pcBegin = std::get<0>(dataRange);
+					void*& pcEnd = std::get<1>(dataRange);
+					if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+						bExistsRange = true;
+						vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
+						bool bExistsSymbol = false;
+						for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
+							uintptr_t& unsOffset = std::get<1>(*sit);
+							if (unOffset == unsOffset) {
+								bExistsSymbol = true;
+							}
+						}
+						if (!bExistsSymbol) {
+							vecSymbols.push_back(SymbolOffset(szSymbolBuffer, unOffset));
+						}
+					}
+				}
+				if (!bExistsRange) {
+					vecSymbolsOffsets vecSymbols;
+					vecSymbols.push_back(SymbolOffset(szSymbolBuffer, unOffset));
+					m_vecRangesSymbolsOffsetsCache.push_back(RangeSymbolsOffsets(RangeOfDataForRTII(pBegin, pEnd), vecSymbols));
+				}
+			}
+
+			return unOffset;
+		}
+
+		pLastType = reinterpret_cast<void*>(reinterpret_cast<char*>(pType) + sizeof(void*));
+	}
+
+	return 0;
+}
+
+void* RTTI::GetVTableAddressFromModule(HMODULE hModule, const char* szClassName) {
+
+	if (m_bCaching && m_bModulesCaching) {
+		void* pResult = GetVTableAddressFromModuleCache(hModule, szClassName);
+		if (pResult) {
+			return pResult;
+		}
+	}
+
+	if (!hModule) {
+		return nullptr;
+	}
+
+	MODULEINFO modinf;
+	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
+		return nullptr;
+	}
+
+	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
+
+#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
+	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
+#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
+
+	void* pAddress = GetVTableAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
+
+	if (m_bCaching && m_bModulesCaching) {
+		bool bExistsModule = false;
+		for (vecModulesSymbolsAddresses::iterator it = m_vecModulesSymbolsAddressesCache.begin(); it != m_vecModulesSymbolsAddressesCache.end(); ++it) {
+			HMODULE& hMod = std::get<0>(*it);
+			if (hMod == hModule) {
+				bExistsModule = true;
+				vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
+				bool bExistsSymbol = false;
+				for (vecSymbolsAddresses::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
+					void*& psAddress = std::get<1>(*sit);
+					if (pAddress == psAddress) {
+						bExistsSymbol = true;
+					}
+				}
+				if (!bExistsSymbol) {
+					vecSymbols.push_back(SymbolAddress(szClassName, pAddress));
+				}
+			}
+		}
+		if (!bExistsModule) {
+			vecSymbolsAddresses vecSymbols;
+			vecSymbols.push_back(SymbolAddress(szClassName, pAddress));
+			m_vecModulesSymbolsAddressesCache.push_back(ModuleSymbolsAddresses(hModule, vecSymbols));
+		}
+	}
+
+	return pAddress;
+}
+
+uintptr_t RTTI::GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName) {
+
+	if (m_bCaching && m_bModulesCaching) {
+		uintptr_t unResult = GetVTableOffsetFromModuleCache(hModule, szClassName);
+		if (unResult) {
+			return unResult;
+		}
+	}
+
+	if (!hModule) {
+		return 0;
+	}
+
+	MODULEINFO modinf;
+	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
+		return 0;
+	}
+
+	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
+	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
+
+#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
+	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
+#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
+
+	uintptr_t unOffset = GetVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
+
+	if (m_bCaching && m_bModulesCaching) {
+		bool bExistsModule = false;
+		for (vecModulesSymbolsOffsets::iterator it = m_vecModulesSymbolsOffsetsCache.begin(); it != m_vecModulesSymbolsOffsetsCache.end(); ++it) {
+			HMODULE& hMod = std::get<0>(*it);
+			if (hMod == hModule) {
+				bExistsModule = true;
+				vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
+				bool bExistsSymbol = false;
+				for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
+					uintptr_t& unsOffset = std::get<1>(*sit);
+					if (unOffset == unsOffset) {
+						bExistsSymbol = true;
+					}
+				}
+				if (!bExistsSymbol) {
+					vecSymbols.push_back(SymbolOffset(szClassName, unOffset));
+				}
+			}
+		}
+		if (!bExistsModule) {
+			vecSymbolsOffsets vecSymbols;
+			vecSymbols.push_back(SymbolOffset(szClassName, unOffset));
+			m_vecModulesSymbolsOffsetsCache.push_back(ModuleSymbolsOffsets(hModule, vecSymbols));
+		}
+	}
+
+	return unOffset;
+}
+
+//  Multiple
+vecSymbolsAddresses RTTI::GetVTablesAddressesFromRange(void* pBegin, void* pEnd) {
+	vecSymbolsAddresses vecData;
+
+	if (m_bCaching && m_bRangesCaching) {
+		for (vecRangesSymbolsAddresses::iterator it = m_vecRangesSymbolsAddressesCache.begin(); it != m_vecRangesSymbolsAddressesCache.end(); ++it) {
+			RangeOfDataForRTII& rangeData = std::get<0>(*it);
+			void*& pcBegin = std::get<0>(rangeData);
+			void*& pcEnd = std::get<1>(rangeData);
+			if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
+				//return std::get<1>(*it);
+				m_vecRangesSymbolsAddressesCache.erase(it);
+			}
+		}
+	}
+
+	void* pTypeInfo = FindTypeInfoAddressFromRange(pBegin, pEnd);
+	if (!pTypeInfo) {
+		return vecData;
+	}
+
+	PTYPEDESCRIPTOR pTypeDesc = reinterpret_cast<PTYPEDESCRIPTOR>(reinterpret_cast<char*>(pTypeInfo) - (sizeof(void*) * 2));
+
+	std::unique_ptr<char[]> mem_szSymbolBuffer(new char[RTTI_DEFAULT_MAX_SYMBOL_LENGTH]); // 0x7FF - Max for MSVC
+	char* szSymbolBuffer = mem_szSymbolBuffer.get();
+	if (!szSymbolBuffer) {
+		return vecData;
+	}
+	memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
+
+	// Converting
+	char szVTable[sizeof(void*) + 1];
+	memset(szVTable, 0, sizeof(szVTable));
+	for (unsigned char i = 0; i < sizeof(void*); ++i) {
+		char cByte = reinterpret_cast<char*>(&(pTypeDesc->pVTable))[i];
+		if (cByte == '\x00') {
+			cByte = '\x2A';
+		}
+		szVTable[i] = cByte;
+	}
+
+	// Finding
+	void* pLastType = pBegin;
+	while (pLastType < pEnd) {
+		void* pType = FindSignature(reinterpret_cast<unsigned char*>(pLastType), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szVTable);
+		if (!pType) {
+			break;
+		}
+
+		// Converting
+#ifdef _WIN64
+		uintptr_t unTypeOffsetTemp = reinterpret_cast<uintptr_t>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
+		unsigned int unTypeOffset = (*(reinterpret_cast<unsigned int*>(&unTypeOffsetTemp)));
+
+		char szTypeOffset[sizeof(int) + 1];
+		memset(szTypeOffset, 0, sizeof(szTypeOffset));
+		for (unsigned char i = 0; i < sizeof(int); ++i) {
+			char cByte = reinterpret_cast<char*>(&unTypeOffset)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+		}
+			szTypeOffset[i] = cByte;
+	}
+#elif _WIN32
+		char szType[sizeof(void*) + 1];
+		memset(szType, 0, sizeof(szType));
+		for (unsigned char i = 0; i < sizeof(void*); ++i) {
+			char cByte = reinterpret_cast<char*>(&pType)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szType[i] = cByte;
+		}
+#endif
+
+		// Finding
+		void* pLastReference = pBegin;
+		while (pLastReference < pEnd) {
+#ifdef _WIN64
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szTypeOffset);
+#elif _WIN32
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szType);
+#endif
+			if (!pReference) {
+				break;
+			}
+
+#ifdef _WIN64
+			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) != 0) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) != 0)))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+#elif _WIN32
+			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) >= reinterpret_cast<unsigned long>(pBegin)) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) >= reinterpret_cast<unsigned long>(pBegin))))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+#endif
+
+			void* pLocation = reinterpret_cast<unsigned char*>(pReference) - (sizeof(unsigned long) * 3);
+
+			char szLocation[sizeof(void*) + 1];
+			memset(szLocation, 0, sizeof(szLocation));
+			for (unsigned char i = 0; i < sizeof(void*); ++i) {
+				char cByte = reinterpret_cast<char*>(&pLocation)[i];
+				if (cByte == '\x00') {
+					cByte = '\x2A';
+				}
+				szLocation[i] = cByte;
+			}
+
+			void* pMeta = FindSignature(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szLocation);
+			if (!pMeta) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+				continue;
+			}
+
+			PTYPEDESCRIPTOR pTypeDescriptor = reinterpret_cast<PTYPEDESCRIPTOR>(pType);
+			char* pSymbol = &(pTypeDescriptor->Name);
+
+			char* pNewSymbol = pSymbol;
+			if (pSymbol[4] == '?') {
+				pNewSymbol = pSymbol + 1;
+			}
+			else if (pSymbol[0] == '.') {
+				pNewSymbol = pSymbol + 4;
+			}
+			else if (pSymbol[0] == '?') {
+				pNewSymbol = pSymbol + 2;
+			}
+			else {
+				break;
+			}
+
+			memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
+			sprintf_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH, "??_7%s6B@", pNewSymbol);
+			if (!((UnDecorateSymbolName(szSymbolBuffer, szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1, UNDNAME_NAME_ONLY | UNDNAME_NO_SPECIAL_SYMS)) != 0)) {
+				break;
+			}
+
+			size_t unSymbolBufferLength = strnlen_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1);
+
+			void* pPattern1 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`anonymous namespace'");
+			if (pPattern1) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern1) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 24);
+			}
+
+			void* pPattern2 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`vftable'");
+			if (pPattern2) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern2) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 12);
+			}
+
+			void* pPattern3 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "const ");
+			if (pPattern3) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern3) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 7);
+			}
+
+			printf("Found symbol: %s\n", szSymbolBuffer);
+
+			vecData.push_back(SymbolAddress(szSymbolBuffer, reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*))));
+
+			if (m_bMinIterations) {
+				break;
+			}
+
+			pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
+		}
+
+		pLastType = reinterpret_cast<void*>(reinterpret_cast<char*>(pType) + sizeof(void*));
 	}
 
 	if (m_bCaching && m_bRangesCaching && (vecData.size() > 0)) {
@@ -883,7 +1118,8 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromRange(void* pBegin, void* pEnd) {
 			void*& pcBegin = std::get<0>(rangeData);
 			void*& pcEnd = std::get<1>(rangeData);
 			if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
-				return std::get<1>(*it);
+				//return std::get<1>(*it);
+				m_vecRangesSymbolsOffsetsCache.erase(it);
 			}
 		}
 	}
@@ -902,31 +1138,90 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromRange(void* pBegin, void* pEnd) {
 	}
 	memset(szSymbolBuffer, 0, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH);
 
-	std::vector<void*> vecTypes = FindReferencesAddressesFromRange(pBegin, pEnd, pTypeDesc->pVFTable);
-	for (std::vector<void*>::iterator ittype = vecTypes.begin(); ittype != vecTypes.end(); ++ittype) {
-		void* pType = reinterpret_cast<void*>(*ittype);
+	// Converting
+	char szVTable[sizeof(void*) + 1];
+	memset(szVTable, 0, sizeof(szVTable));
+	for (unsigned char i = 0; i < sizeof(void*); ++i) {
+		char cByte = reinterpret_cast<char*>(&(pTypeDesc->pVTable))[i];
+		if (cByte == '\x00') {
+			cByte = '\x2A';
+		}
+		szVTable[i] = cByte;
+	}
+
+	// Finding
+	void* pLastType = pBegin;
+	while (pLastType < pEnd) {
+		void* pType = FindSignature(reinterpret_cast<unsigned char*>(pLastType), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szVTable);
+		if (!pType) {
+			break;
+		}
+
+		// Converting
 #ifdef _WIN64
-		unsigned long long unTypeOffsetTemp = reinterpret_cast<unsigned long long>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
-		unsigned long unTypeOffset = *(reinterpret_cast<unsigned long*>(&unTypeOffsetTemp));
-		std::vector<void*> vecReferences = FindReferencesAddressesFromRange32(pBegin, pEnd, unTypeOffset);
+		uintptr_t unTypeOffsetTemp = reinterpret_cast<uintptr_t>(reinterpret_cast<char*>(pType) - reinterpret_cast<uintptr_t>(pBegin));
+		unsigned int unTypeOffset = (*(reinterpret_cast<unsigned int*>(&unTypeOffsetTemp)));
+
+		char szTypeOffset[sizeof(int) + 1];
+		memset(szTypeOffset, 0, sizeof(szTypeOffset));
+		for (unsigned char i = 0; i < sizeof(int); ++i) {
+			char cByte = reinterpret_cast<char*>(&unTypeOffset)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szTypeOffset[i] = cByte;
+		}
 #elif _WIN32
-		std::vector<void*> vecReferences = FindReferencesAddressesFromRange(pBegin, pEnd, pType);
+		char szType[sizeof(void*) + 1];
+		memset(szType, 0, sizeof(szType));
+		for (unsigned char i = 0; i < sizeof(void*); ++i) {
+			char cByte = reinterpret_cast<char*>(&pType)[i];
+			if (cByte == '\x00') {
+				cByte = '\x2A';
+			}
+			szType[i] = cByte;
+		}
 #endif
-		for (std::vector<void*>::iterator itreference = vecReferences.begin(); itreference != vecReferences.end(); ++itreference) {
-			void* pReference = reinterpret_cast<void*>(*itreference);
+
+		// Finding
+		void* pLastReference = pBegin;
+		while (pLastReference < pEnd) {
+#ifdef _WIN64
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szTypeOffset);
+#elif _WIN32
+			void* pReference = FindSignature(reinterpret_cast<unsigned char*>(pLastReference), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szType);
+#endif
+			if (!pReference) {
+				break;
+			}
+
 #ifdef _WIN64
 			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) != 0) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) != 0)))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 #elif _WIN32
 			if (!(((*(reinterpret_cast<unsigned long*>(pReference))) >= reinterpret_cast<unsigned long>(pBegin)) && ((*(reinterpret_cast<unsigned long*>(reinterpret_cast<unsigned char*>(pReference) + sizeof(unsigned long))) >= reinterpret_cast<unsigned long>(pBegin))))) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 #endif
 
 			void* pLocation = reinterpret_cast<unsigned char*>(pReference) - (sizeof(unsigned long) * 3);
-			void* pMeta = FindReferenceAddressFromRange(pBegin, pEnd, pLocation);
+
+			char szLocation[sizeof(void*) + 1];
+			memset(szLocation, 0, sizeof(szLocation));
+			for (unsigned char i = 0; i < sizeof(void*); ++i) {
+				char cByte = reinterpret_cast<char*>(&pLocation)[i];
+				if (cByte == '\x00') {
+					cByte = '\x2A';
+				}
+				szLocation[i] = cByte;
+			}
+
+			void* pMeta = FindSignature(reinterpret_cast<unsigned char*>(pBegin), reinterpret_cast<const unsigned char*>(const_cast<const void*>(pEnd)), szLocation);
 			if (!pMeta) {
+				pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 				continue;
 			}
 
@@ -955,21 +1250,37 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromRange(void* pBegin, void* pEnd) {
 
 			size_t unSymbolBufferLength = strnlen_s(szSymbolBuffer, sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1);
 
-			void* pPattern1 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "::`vftable'");
+			void* pPattern1 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`anonymous namespace'");
 			if (pPattern1) {
-				szSymbolBuffer[unSymbolBufferLength - 11] = 0;
-			}
-			void* pPattern2 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "const ");
-			if (pPattern2) {
-				szSymbolBuffer[unSymbolBufferLength - 6] = 0;
-			}
-			void* pPattern3 = FindPattern(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + (sizeof(char) * RTTI_DEFAULT_MAX_SYMBOL_LENGTH - 1))), "::`anonymous namespace'");
-			if (pPattern3) {
-				szSymbolBuffer[unSymbolBufferLength - 23] = 0;
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern1) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 24);
 			}
 
-			vecData.push_back(SymbolOffset(szSymbolBuffer, reinterpret_cast<uintptr_t>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*)) - reinterpret_cast<uintptr_t>(pBegin)));
+			void* pPattern2 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "::`vftable'");
+			if (pPattern2) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern2) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 12);
+			}
+
+			void* pPattern3 = FindSignature(reinterpret_cast<unsigned char*>(szSymbolBuffer), reinterpret_cast<const unsigned char*>(const_cast<const char*>(szSymbolBuffer + unSymbolBufferLength)), "const ");
+			if (pPattern3) {
+				uintptr_t rva = reinterpret_cast<uintptr_t>(pPattern3) - reinterpret_cast<uintptr_t>(szSymbolBuffer);
+				szSymbolBuffer[rva] = 0;
+				memset(szSymbolBuffer + rva, 0, 7);
+			}
+
+			vecData.push_back(SymbolOffset(szSymbolBuffer, reinterpret_cast<uintptr_t>(reinterpret_cast<unsigned char*>(pMeta) + sizeof(void*) - reinterpret_cast<uintptr_t>(pBegin))));
+
+			if (m_bMinIterations) {
+				break;
+			}
+
+			pLastReference = reinterpret_cast<void*>(reinterpret_cast<char*>(pReference) + sizeof(int));
 		}
+
+		pLastType = reinterpret_cast<void*>(reinterpret_cast<char*>(pType) + sizeof(void*));
 	}
 
 	if (m_bCaching && m_bRangesCaching && (vecData.size() > 0)) {
@@ -1004,12 +1315,7 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromModule(HMODULE hModule) {
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 	
 #ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
+	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
 #endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 	vecData = GetVTablesAddressesFromRange(reinterpret_cast<void*>(pBegin), pEnd);
@@ -1046,12 +1352,7 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromModule(HMODULE hModule) {
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
 #ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
+	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
 #endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 	vecData = GetVTablesOffsetsFromRange(reinterpret_cast<void*>(pBegin), pEnd);
@@ -1062,160 +1363,6 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromModule(HMODULE hModule) {
 
 	return vecData;
 }
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-vecSymbolsOffsets RTTI::GetVTablesOffsetsFromFile(const char* szModulePath) {
-	vecSymbolsOffsets vecData;
-
-	if (m_bCaching && m_bFilesCaching) {
-		for (vecFilesSymbolsOffsets::iterator it = m_vecFilesSymbolsOffsetsCache.begin(); it != m_vecFilesSymbolsOffsetsCache.end(); ++it) {
-			std::string& str_ModulePath = std::get<0>(*it);
-			if (strcmp(str_ModulePath.data(), szModulePath) == 0) {
-				return std::get<1>(*it);
-			}
-		}
-	}
-
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		vecData = GetVTablesOffsetsFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize));
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-
-	if (m_bCaching && m_bFilesCaching && (vecData.size() > 0)) {
-		m_vecFilesSymbolsOffsetsCache.push_back(FileSymbolsOffsets(szModulePath, vecData));
-	}
-
-	return vecData;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
-//  One
-void* RTTI::GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName) {
-	if (m_bCaching && m_bRangesCaching) {
-		void* pResult = GetVTableAddressFromRangeCache(pBegin, pEnd, szClassName);
-		if (pResult) {
-			return pResult;
-		}
-	}
-	vecSymbolsAddresses vecData = GetVTablesAddressesFromRange(pBegin, pEnd);
-	for (vecSymbolsAddresses::iterator it = vecData.begin(); it != vecData.end(); ++it) {
-		std::string& str_SymbolName = std::get<0>(*it);
-		if (strcmp(str_SymbolName.data(), szClassName) == 0) {
-			return std::get<1>(*it);
-		}
-	}
-	return nullptr;
-}
-
-uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName) {
-	if (m_bCaching && m_bRangesCaching) {
-		uintptr_t unResult = GetVTableOffsetFromRangeCache(pBegin, pEnd, szClassName);
-		if (unResult) {
-			return unResult;
-		}
-	}
-	vecSymbolsOffsets vecData = GetVTablesOffsetsFromRange(pBegin, pEnd);
-	for (vecSymbolsOffsets::iterator it = vecData.begin(); it != vecData.end(); ++it) {
-		std::string& str_SymbolName = std::get<0>(*it);
-		if (strcmp(str_SymbolName.data(), szClassName) == 0) {
-			return std::get<1>(*it);
-		}
-	}
-	return 0;
-}
-
-void* RTTI::GetVTableAddressFromModule(HMODULE hModule, const char* szClassName) {
-
-	if (m_bCaching && m_bModulesCaching) {
-		void* pResult = GetVTableAddressFromModuleCache(hModule, szClassName);
-		if (pResult) {
-			return pResult;
-		}
-	}
-
-	if (!hModule) {
-		return nullptr;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return nullptr;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return GetVTableAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
-}
-
-uintptr_t RTTI::GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName) {
-
-	if (m_bCaching && m_bModulesCaching) {
-		uintptr_t unResult = GetVTableOffsetFromModuleCache(hModule, szClassName);
-		if (unResult) {
-			return unResult;
-		}
-	}
-
-	if (!hModule) {
-		return 0;
-	}
-
-	MODULEINFO modinf;
-	if (!GetModuleInformation(HANDLE(-1), hModule, &modinf, sizeof(MODULEINFO))) {
-		return 0;
-	}
-
-	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
-	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	unsigned char* dpBegin = nullptr;
-	void* dpEnd = nullptr;
-	if (GetRealModuleDimensions(hModule, reinterpret_cast<void**>(&dpBegin), &dpEnd)) {
-		pBegin = dpBegin;
-		pEnd = dpEnd;
-	}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
-	return GetVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-uintptr_t RTTI::GetVTableOffsetFromFile(const char* szModulePath, const char* szClassName) {
-	uintptr_t unResult = 0;
-	if (m_bCaching && m_bFilesCaching) {
-		unResult = GetVTableOffsetFromFileCache(szModulePath, szClassName);
-		if (unResult) {
-			return unResult;
-		}
-	}
-	HANDLE hFile = nullptr;
-	HANDLE hFileMap = nullptr;
-	LPVOID pMap = nullptr;
-	if (MapFile(szModulePath, &hFile, &hFileMap, &pMap)) {
-		DWORD dwFileSize = GetFileSize(hFile, nullptr);
-		unsigned char* pBegin = reinterpret_cast<unsigned char*>(pMap);
-		unResult = GetVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), reinterpret_cast<void*>(pBegin + dwFileSize), szClassName);
-		UnMapFile(hFile, hFileMap, pMap);
-	}
-	return unResult;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
 
 // Finding in cache
 void* RTTI::GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char* szClassName) {
@@ -1286,24 +1433,6 @@ uintptr_t RTTI::GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szCl
 	return 0;
 }
 
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-uintptr_t RTTI::GetVTableOffsetFromFileCache(const char* szModulePath, const char* szClassName) {
-	for (vecFilesSymbolsOffsets::iterator it = m_vecFilesSymbolsOffsetsCache.begin(); it != m_vecFilesSymbolsOffsetsCache.end(); ++it) {
-		std::string& str_ModulePath = std::get<0>(*it);
-		if (strcmp(str_ModulePath.data(), szModulePath) == 0) {
-			vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
-			for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
-				std::string& str_SymbolName = std::get<0>(*sit);
-				if (strcmp(str_SymbolName.data(), szClassName) == 0) {
-					return std::get<1>(*sit);
-				}
-			}
-		}
-	}
-	return 0;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
 // For processing
 bool RTTI::IsCacheEnabled() {
 	return m_bCaching;
@@ -1334,13 +1463,6 @@ pvecRangesSymbolsOffsets RTTI::GetRangesOffsetsCache() {
 pvecModulesSymbolsOffsets RTTI::GetModulesOffsetsCache() {
 	if (m_bCaching && m_bModulesCaching) {
 		return &m_vecModulesSymbolsOffsetsCache;
-	}
-	return nullptr;
-}
-
-pvecFilesSymbolsOffsets RTTI::GetFilesOffsetsCache() {
-	if (m_bCaching && m_bFilesCaching) {
-		return &m_vecFilesSymbolsOffsetsCache;
 	}
 	return nullptr;
 }

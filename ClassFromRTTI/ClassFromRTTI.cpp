@@ -10,16 +10,15 @@ using namespace std::chrono;
 // Custom
 #include "RTTI.h"
 
-// General definitions
+#define BENCHMARK_TEST
 
 // ecx - this
 // edx - (unused)
 typedef bool(__fastcall* fnIsTrue)(void* ecx, void* edx);
 typedef const char*(__fastcall* fnHelloWorld)(void* ecx, void* edx);
 
-
 int main() {
-	RTTI cRTTI1(true, true, true); // With caching
+	RTTI cRTTI1(true, true, true, true); // With caching + min iterations
 	RTTI cRTTI2; // Without caching
 	
 	HMODULE hTestDLL = LoadLibrary(TEXT("TestDLL.dll"));
@@ -34,9 +33,10 @@ int main() {
 	uintptr_t unTestingRVA = cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL");
 	printf("TestingDLL (RVA) = 0x%IX\n", unTestingRVA);
 
+#ifdef BENCHMARK_TEST
 	high_resolution_clock::time_point t1;
 	high_resolution_clock::time_point t2;
-	t1 = high_resolution_clock::now();
+
 	for (unsigned char i = 0; i < 10; i++) {
 		if (unTestingRVA != cRTTI1.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
 			printf("Error: Data error!\n");
@@ -44,6 +44,7 @@ int main() {
 	}
 	t2 = high_resolution_clock::now();
 	printf("Bench (10 calls)                  = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 10'000; i++) {
 		if (unTestingRVA != cRTTI1.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -52,6 +53,7 @@ int main() {
 	}
 	t2 = high_resolution_clock::now();
 	printf("Bench (10 000 calls)              = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 500'000; i++) {
 		if (unTestingRVA != cRTTI1.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -60,6 +62,7 @@ int main() {
 	}
 	t2 = high_resolution_clock::now();
 	printf("Bench (500 000 calls)             = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 1'000'000; i++) {
 		if (unTestingRVA != cRTTI1.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -68,6 +71,7 @@ int main() {
 	}
 	t2 = high_resolution_clock::now();
 	printf("Bench (1 000 000 calls)           = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned char i = 0; i < 10; i++) {
 		if (unTestingRVA != cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -75,7 +79,8 @@ int main() {
 		}
 	}
 	t2 = high_resolution_clock::now();
-	printf("Bench (10 calls + NoCache)        = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+	printf("Bench (10 calls + NoCache + NoMinIterations)        = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 10'000; i++) {
 		if (unTestingRVA != cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -83,7 +88,8 @@ int main() {
 		}
 	}
 	t2 = high_resolution_clock::now();
-	printf("Bench (10 000 calls + NoCache)    = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+	printf("Bench (10 000 calls + NoCache + NoMinIterations)    = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 50'000; i++) {
 		if (unTestingRVA != cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -91,7 +97,8 @@ int main() {
 		}
 	}
 	t2 = high_resolution_clock::now();
-	printf("Bench (50 000 calls + NoCache)    = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+	printf("Bench (50 000 calls + NoCache + NoMinIterations)    = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
 	t1 = high_resolution_clock::now();
 	for (unsigned int i = 0; i < 100'000; i++) {
 		if (unTestingRVA != cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -99,7 +106,9 @@ int main() {
 		}
 	}
 	t2 = high_resolution_clock::now();
-	printf("Bench (100 000 calls + NoCache)   = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+	printf("Bench (100 000 calls + NoCache + NoMinIterations)   = %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+
+#endif // BENCHMARK_TEST
 
 	if (!unTestingRVA) {
 		printf("Error: TestingDLL RVA VTable not found.\n");
