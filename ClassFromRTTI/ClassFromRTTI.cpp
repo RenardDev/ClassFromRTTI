@@ -43,6 +43,7 @@ int main() {
 	high_resolution_clock::time_point t2;
 
 	// Stage 1
+	printf("# Stage 1\n");
 	t1 = high_resolution_clock::now();
 	for (unsigned char i = 0; i < 100; ++i) {
 		if (unTestingRVA != cRTTI1.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -80,6 +81,7 @@ int main() {
 	printf("Bench (50 000 calls)............................= %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 
 	// Stage 2
+	printf("# Stage 2\n");
 	t1 = high_resolution_clock::now();
 	for (unsigned char i = 0; i < 100; ++i) {
 		if (unTestingRVA != cRTTI2.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -117,6 +119,7 @@ int main() {
 	printf("Bench (50 000 calls + Cache)....................= %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 
 	// Stage 3
+	printf("# Stage 3\n");
 	t1 = high_resolution_clock::now();
 	for (unsigned char i = 0; i < 100; ++i) {
 		if (unTestingRVA != cRTTI3.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -154,6 +157,7 @@ int main() {
 	printf("Bench (50 000 calls + MinIterations)............= %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 	
 	// Stage 4
+	printf("# Stage 4\n");
 	t1 = high_resolution_clock::now();
 	for (unsigned char i = 0; i < 100; ++i) {
 		if (unTestingRVA != cRTTI4.GetVTableOffsetFromModule(hTestDLL, "TestingDLL")) {
@@ -189,7 +193,6 @@ int main() {
 	}
 	t2 = high_resolution_clock::now();
 	printf("Bench (50 000 calls + Cache + MinIterations)....= %lld ms\n", duration_cast<std::chrono::milliseconds>(t2 - t1).count());
-	
 #endif // BENCHMARK_TEST
 
 	if (!unTestingRVA) {
@@ -202,6 +205,7 @@ int main() {
 	fnIsTrue IsTrue = reinterpret_cast<fnIsTrue>(pTestingDLL_VT[0]);
 	fnHelloWorld HelloWorld = reinterpret_cast<fnHelloWorld>(pTestingDLL_VT[1]);
 	
+	printf("# Result:\n");
 	printf("IsTrue = %s\n", IsTrue(pTestingDLL_VT, nullptr) ? "true" : "false");
 	printf("HelloWorld = %s\n", HelloWorld(pTestingDLL_VT, nullptr));
 
