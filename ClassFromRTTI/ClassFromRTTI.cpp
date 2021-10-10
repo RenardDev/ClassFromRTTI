@@ -12,16 +12,19 @@ using namespace std::chrono;
 
 #define BENCHMARK_TEST
 
-// ecx - this
-// edx - (unused)
+// __thiscall
+//  > ecx - this
+// __fastcall (alternative for __thiscall)
+//  > ecx - this
+//  > edx - (unused)
 typedef bool(__fastcall* fnIsTrue)(void* ecx, void* edx);
 typedef const char*(__fastcall* fnHelloWorld)(void* ecx, void* edx);
 
 int main() {
 	RTTI cRTTI1; // Default
-	RTTI cRTTI2(false, true, true, true); // With caching
-	RTTI cRTTI3(true); // With min iterations
-	RTTI cRTTI4(true, true, true, true); // With cache and min iterations
+	RTTI cRTTI2(true, true, true, true, false); // With caching
+	RTTI cRTTI3(false, false, false, true, true); // With min iterations
+	RTTI cRTTI4(true, true, true, true, true); // With cache and min iterations
 	
 	HMODULE hTestDLL = LoadLibrary(TEXT("TestDLL.dll"));
 	if (!hTestDLL) {

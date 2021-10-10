@@ -65,9 +65,9 @@ typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, *pvecModules
 class RTTI {
 public:
 #ifdef RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bAutoScanIntoCache = false, bool bMinIterations = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
+	RTTI(bool bAutoScanInCache = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bForceFastMethod = false, bool bMinIters = false);
 #else // RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bMinIterations = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false);
+	RTTI(bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bForceFastMethod = false, bool bMinIters = false);
 #endif // !RTTI_EXPERIMENTAL_FEATURES
 	~RTTI();
 private:
@@ -79,10 +79,10 @@ private:
 public:
 	// Finding VTables
 	//  One
-	void* GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetFastVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
-	uintptr_t GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
+	void* GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	uintptr_t GetFastVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
+	uintptr_t GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModule(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName);
 	//  Multiple
@@ -113,10 +113,11 @@ private:
 	void* m_pLdrUnregisterDllNotification;
 	PVOID m_pCookie;
 #endif // RTTI_EXPERIMENTAL_FEATURES
-	bool m_bMinIterations;
 	bool m_bCaching;
 	bool m_bRangesCaching;
 	bool m_bModulesCaching;
+	bool m_bForceFastMethod;
+	bool m_bMinIters;
 	vecRangesSymbolsAddresses m_vecRangesSymbolsAddressesCache;
 	vecModulesSymbolsAddresses m_vecModulesSymbolsAddressesCache;
 	vecRangesSymbolsOffsets m_vecRangesSymbolsOffsetsCache;
