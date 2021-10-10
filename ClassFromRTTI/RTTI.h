@@ -80,7 +80,9 @@ public:
 	// Finding VTables
 	//  One
 	void* GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
+	void* GetFastVTableAddressFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	uintptr_t GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
+	uintptr_t GetFastVTableOffsetFromRange(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModule(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModule(HMODULE hModule, const char* szClassName);
 	//  Multiple
