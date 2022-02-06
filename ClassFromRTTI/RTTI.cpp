@@ -1,35 +1,5 @@
 #include "RTTI.h"
 
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-#define LDR_DLL_NOTIFICATION_REASON_LOADED   1
-#define LDR_DLL_NOTIFICATION_REASON_UNLOADED 2
-
-// General definitions
-typedef const PUNICODE_STRING PCUNICODE_STRING;
-typedef struct _LDR_DLL_LOADED_NOTIFICATION_DATA {
-	ULONG Flags;                    // Reserved.
-	PCUNICODE_STRING FullDllName;   // The full path name of the DLL module.
-	PCUNICODE_STRING BaseDllName;   // The base file name of the DLL module.
-	PVOID DllBase;                  // A pointer to the base address for the DLL in memory.
-	ULONG SizeOfImage;              // The size of the DLL image, in bytes.
-} LDR_DLL_LOADED_NOTIFICATION_DATA, *PLDR_DLL_LOADED_NOTIFICATION_DATA;
-typedef struct _LDR_DLL_UNLOADED_NOTIFICATION_DATA {
-	ULONG Flags;                    // Reserved.
-	PCUNICODE_STRING FullDllName;   // The full path name of the DLL module.
-	PCUNICODE_STRING BaseDllName;   // The base file name of the DLL module.
-	PVOID DllBase;                  // A pointer to the base address for the DLL in memory.
-	ULONG SizeOfImage;              // The size of the DLL image, in bytes.
-} LDR_DLL_UNLOADED_NOTIFICATION_DATA, *PLDR_DLL_UNLOADED_NOTIFICATION_DATA;
-typedef union _LDR_DLL_NOTIFICATION_DATA {
-	LDR_DLL_LOADED_NOTIFICATION_DATA Loaded;
-	LDR_DLL_UNLOADED_NOTIFICATION_DATA Unloaded;
-} LDR_DLL_NOTIFICATION_DATA, *PLDR_DLL_NOTIFICATION_DATA;
-typedef const PLDR_DLL_NOTIFICATION_DATA PCLDR_DLL_NOTIFICATION_DATA;
-typedef void(CALLBACK* PLDR_DLL_NOTIFICATION_FUNCTION)(_In_ ULONG NotificationReason, _In_ PCLDR_DLL_NOTIFICATION_DATA NotificationData, _In_opt_ PVOID Context);
-typedef NTSTATUS(NTAPI* fnLdrRegisterDllNotification)(_In_ ULONG Flags, _In_ PLDR_DLL_NOTIFICATION_FUNCTION NotificationFunction, _In_opt_ PVOID Context, _Out_ PVOID* Cookie);
-typedef NTSTATUS(NTAPI* fnLdrUnregisterDllNotification)(_In_ PVOID Cookie);
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
 typedef struct _TYPEDESCRIPTOR {
 	void* pVTable;
 	void* pSpare;
@@ -140,155 +110,12 @@ static void* FindSignatureAVX2(unsigned char* pBegin, const unsigned char* pEnd,
 	return nullptr;
 }
 
-// RTTI Processing
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-typedef struct _SHORT_INFO {
-	RTTI* pRTTI;
-	HMODULE hActiveModule;
-	HANDLE hThread;
-} SHORT_INFO, *PSHORT_INFO;
-
-static DWORD WINAPI RTTI_OnLoadDLL(LPVOID lpThreadParameter) {
-	PSHORT_INFO pShortInfo = reinterpret_cast<PSHORT_INFO>(lpThreadParameter);
-	RTTI* pRTTI = pShortInfo->pRTTI;
-	if (pRTTI->IsCacheEnabled()) {
-		vecSymbolsAddresses m_vecFullSymbolsAddresses = pRTTI->GetVTablesAddressesFromModule(pShortInfo->hActiveModule);
-		pvecModulesSymbolsAddresses m_pvecModulesSymbolsAddresses = pRTTI->GetModulesAddressesCache();
-		for (vecModulesSymbolsAddresses::iterator it = m_pvecModulesSymbolsAddresses->begin(); it != m_pvecModulesSymbolsAddresses->end(); ++it) {
-			if (std::get<0>(*it) == pShortInfo->hActiveModule) {
-				vecSymbolsAddresses& m_vecCurrentSymbolsAddresses = std::get<1>(*it);
-				if (m_vecCurrentSymbolsAddresses.size() < m_vecFullSymbolsAddresses.size()) {
-					m_vecCurrentSymbolsAddresses.clear();
-					m_vecCurrentSymbolsAddresses = m_vecFullSymbolsAddresses;
-				}
-				break;
-			}
-		}
-		vecSymbolsOffsets m_vecFullSymbolsOffsets = pRTTI->GetVTablesOffsetsFromModule(pShortInfo->hActiveModule);
-		pvecModulesSymbolsOffsets m_pvecModulesSymbolsOffsets = pRTTI->GetModulesOffsetsCache();
-		for (vecModulesSymbolsOffsets::iterator it = m_pvecModulesSymbolsOffsets->begin(); it != m_pvecModulesSymbolsOffsets->end(); ++it) {
-			if (std::get<0>(*it) == pShortInfo->hActiveModule) {
-				vecSymbolsOffsets& m_vecCurrentSymbolsOffsets = std::get<1>(*it);
-				if (m_vecCurrentSymbolsOffsets.size() < m_vecFullSymbolsOffsets.size()) {
-					m_vecCurrentSymbolsOffsets.clear();
-					m_vecCurrentSymbolsOffsets = m_vecFullSymbolsOffsets;
-				}
-				break;
-			}
-		}
-	}
-	delete pShortInfo;
-	return 0;
-}
-
-static DWORD WINAPI RTTI_OnUnloadDLL(LPVOID lpThreadParameter) {
-	PSHORT_INFO pShortInfo = reinterpret_cast<PSHORT_INFO>(lpThreadParameter);
-	RTTI* pRTTI = pShortInfo->pRTTI;
-	if (pRTTI->IsCacheEnabled()) {
-		pvecModulesSymbolsAddresses m_pvecModulesSymbolsAddresses = pRTTI->GetModulesAddressesCache();
-		for (vecModulesSymbolsAddresses::iterator it = m_pvecModulesSymbolsAddresses->begin(); it != m_pvecModulesSymbolsAddresses->end(); ++it) {
-			if (std::get<0>(*it) == pShortInfo->hActiveModule) {
-				m_pvecModulesSymbolsAddresses->erase(it);
-				break;
-			}
-		}
-		pvecModulesSymbolsOffsets m_pvecModulesSymbolsOffsets = pRTTI->GetModulesOffsetsCache();
-		for (vecModulesSymbolsOffsets::iterator it = m_pvecModulesSymbolsOffsets->begin(); it != m_pvecModulesSymbolsOffsets->end(); ++it) {
-			if (std::get<0>(*it) == pShortInfo->hActiveModule) {
-				m_pvecModulesSymbolsOffsets->erase(it);
-				break;
-			}
-		}
-	}
-
-	for (std::vector<HANDLE>::iterator it = pRTTI->m_vecThreads.begin(); it != pRTTI->m_vecThreads.end(); ++it) {
-		if (pShortInfo->hThread == *it) {
-			pRTTI->m_vecThreads.erase(it);
-			//CloseHandle(*it);
-		}
-	}
-
-	delete pShortInfo;
-	return 0;
-}
-
-static void CALLBACK RTTI_OnDLLNotification(_In_ ULONG NotificationReason, _In_ PCLDR_DLL_NOTIFICATION_DATA NotificationData, _In_opt_ PVOID Context) {
-	RTTI* pRTTI = reinterpret_cast<RTTI*>(Context);
-
-	if (pRTTI->m_vecThreads.size() > 0) {
-		return;
-	}
-
-	if (NotificationReason == LDR_DLL_NOTIFICATION_REASON_LOADED) {
-		PSHORT_INFO pShortInfo = new SHORT_INFO;
-		pShortInfo->pRTTI = pRTTI;
-		pShortInfo->hActiveModule = reinterpret_cast<HMODULE>(NotificationData->Loaded.DllBase);
-		HANDLE hThread = CreateThread(nullptr, 0, RTTI_OnLoadDLL, pShortInfo, CREATE_SUSPENDED, nullptr);
-		if (hThread) {
-			pShortInfo->hThread = hThread;
-			pRTTI->m_vecThreads.push_back(hThread);
-			ResumeThread(hThread);
-		}
-		else {
-			delete pShortInfo;
-		}
-		return;
-	}
-
-	if (NotificationReason == LDR_DLL_NOTIFICATION_REASON_UNLOADED) {
-		PSHORT_INFO pShortInfo = new SHORT_INFO;
-		pShortInfo->pRTTI = pRTTI;
-		pShortInfo->hActiveModule = reinterpret_cast<HMODULE>(NotificationData->Unloaded.DllBase);
-		HANDLE hThread = CreateThread(nullptr, 0, RTTI_OnUnloadDLL, pShortInfo, CREATE_SUSPENDED, nullptr);
-		if (hThread) {
-			pShortInfo->hThread = hThread;
-			pRTTI->m_vecThreads.push_back(hThread);
-			ResumeThread(hThread);
-		}
-		else {
-			delete pShortInfo;
-		}
-		return;
-	}
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-static void GetRealModuleDimensions(void** ppBegin, void **ppEnd) {
-	void* pBegin = *ppBegin;
-	void* pEnd = *ppEnd;
-
-	PIMAGE_DOS_HEADER pDH = reinterpret_cast<PIMAGE_DOS_HEADER>(pBegin);
-	PIMAGE_NT_HEADERS pNTHs = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<char*>(pDH) + pDH->e_lfanew);
-	PIMAGE_FILE_HEADER pFH = &(pNTHs->FileHeader);
-	PIMAGE_OPTIONAL_HEADER pOH = &(pNTHs->OptionalHeader);
-	PIMAGE_SECTION_HEADER pFirstSection = reinterpret_cast<PIMAGE_SECTION_HEADER>(reinterpret_cast<char*>(pFH) + sizeof(IMAGE_FILE_HEADER) + pFH->SizeOfOptionalHeader);
-	for (unsigned long i = 0; i < pFH->NumberOfSections; ++i, ++pFirstSection) {
-		void* pSectionBegin = reinterpret_cast<char*>(pDH) + pFirstSection->VirtualAddress;
-		void* pSectionEnd = reinterpret_cast<char*>(pBegin) + pFirstSection->Misc.VirtualSize;
-		if (strncmp(reinterpret_cast<char*>(&(pFirstSection->Name)), ".rdata", 8) == 0) {
-			pBegin = pSectionBegin;
-			pEnd = pSectionEnd;
-		}
-	}
-}
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
 //---------------------------------------------------------------------------------
 // RTTI interface
 //---------------------------------------------------------------------------------
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-RTTI::RTTI(bool bAutoScanInCache, bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bForceFastMethod, bool bMinIters) {
-#else // RTTI_EXPERIMENTAL_FEATURES
 RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bForceFastMethod, bool bMinIters) {
-#endif // !RTTI_EXPERIMENTAL_FEATURES
 	m_bAvailableSSE2 = false;
 	m_bAvailableAVX2 = false;
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	m_pLdrRegisterDllNotification = nullptr;
-	m_pLdrUnregisterDllNotification = nullptr;
-	m_pCookie = nullptr;
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	m_bCaching = bCaching;
 	m_bRangesCaching = bRangeCaching;
 	m_bModulesCaching = bModulesCaching;
@@ -310,37 +137,6 @@ RTTI::RTTI(bool bCaching, bool bRangeCaching, bool bModulesCaching, bool bForceF
 		__cpuid(cpuinf, 0x00000007);
 		m_bAvailableAVX2 = (cpuinf[1] & (1 << 5)) != 0;
 	}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	if (bAutoScanInCache) {
-		HMODULE hNTDLL = GetModuleHandle(TEXT("ntdll.dll"));
-		if (hNTDLL) {
-			m_pLdrRegisterDllNotification = reinterpret_cast<void*>(GetProcAddress(hNTDLL, "LdrRegisterDllNotification"));
-			m_pLdrUnregisterDllNotification = reinterpret_cast<void*>(GetProcAddress(hNTDLL, "LdrUnregisterDllNotification"));
-		}
-		if (m_pLdrRegisterDllNotification) {
-			fnLdrRegisterDllNotification LdrRegisterDllNotification = reinterpret_cast<fnLdrRegisterDllNotification>(m_pLdrRegisterDllNotification);
-			LdrRegisterDllNotification(0, RTTI_OnDLLNotification, this, &m_pCookie);
-		}
-	}
-#endif // RTTI_EXPERIMENTAL_FEATURES
-}
-
-RTTI::~RTTI() {
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	if (m_pCookie) {
-		if (m_pLdrUnregisterDllNotification) {
-			fnLdrUnregisterDllNotification LdrUnregisterDllNotification = reinterpret_cast<fnLdrUnregisterDllNotification>(m_pLdrUnregisterDllNotification);
-			LdrUnregisterDllNotification(m_pCookie);
-		}
-	}
-	if (m_vecThreads.size() > 0) {
-		for (std::vector<HANDLE>::iterator it = m_vecThreads.begin(); it != m_vecThreads.end(); ++it) {
-			WaitForSingleObject(*it, INFINITE);
-			CloseHandle(*it);
-		}
-	}
-#endif // RTTI_EXPERIMENTAL_FEATURES
 }
 
 // Finding Signature
@@ -469,7 +265,7 @@ void* RTTI::GetFastVTableAddressFromRange(void* pBegin, void* pEnd, const char* 
 				RangeOfDataForRTII& dataRange = std::get<0>(*it);
 				void*& pcBegin = std::get<0>(dataRange);
 				void*& pcEnd = std::get<1>(dataRange);
-				if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+				if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 					bExistsRange = true;
 					vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 					bool bExistsSymbol = false;
@@ -513,7 +309,7 @@ void* RTTI::GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szCl
 				RangeOfDataForRTII& dataRange = std::get<0>(*it);
 				void*& pcBegin = std::get<0>(dataRange);
 				void*& pcEnd = std::get<1>(dataRange);
-				if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+				if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 					bExistsRange = true;
 					vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 					bool bExistsSymbol = false;
@@ -701,7 +497,7 @@ void* RTTI::GetVTableAddressFromRange(void* pBegin, void* pEnd, const char* szCl
 					RangeOfDataForRTII& dataRange = std::get<0>(*it);
 					void*& pcBegin = std::get<0>(dataRange);
 					void*& pcEnd = std::get<1>(dataRange);
-					if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+					if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 						bExistsRange = true;
 						vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 						bool bExistsSymbol = false;
@@ -831,7 +627,7 @@ uintptr_t RTTI::GetFastVTableOffsetFromRange(void* pBegin, void* pEnd, const cha
 				RangeOfDataForRTII& dataRange = std::get<0>(*it);
 				void*& pcBegin = std::get<0>(dataRange);
 				void*& pcEnd = std::get<1>(dataRange);
-				if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+				if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 					bExistsRange = true;
 					vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 					bool bExistsSymbol = false;
@@ -875,7 +671,7 @@ uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* s
 				RangeOfDataForRTII& dataRange = std::get<0>(*it);
 				void*& pcBegin = std::get<0>(dataRange);
 				void*& pcEnd = std::get<1>(dataRange);
-				if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+				if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 					bExistsRange = true;
 					vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 					bool bExistsSymbol = false;
@@ -1062,7 +858,7 @@ uintptr_t RTTI::GetVTableOffsetFromRange(void* pBegin, void* pEnd, const char* s
 					RangeOfDataForRTII& dataRange = std::get<0>(*it);
 					void*& pcBegin = std::get<0>(dataRange);
 					void*& pcEnd = std::get<1>(dataRange);
-					if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+					if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 						bExistsRange = true;
 						vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 						bool bExistsSymbol = false;
@@ -1112,10 +908,6 @@ void* RTTI::GetVTableAddressFromModule(HMODULE hModule, const char* szClassName)
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 	void* pAddress = GetFastVTableAddressFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
 	if (!pAddress) {
@@ -1177,10 +969,6 @@ uintptr_t RTTI::GetVTableOffsetFromModule(HMODULE hModule, const char* szClassNa
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 	uintptr_t unOffset = GetFastVTableOffsetFromRange(reinterpret_cast<void*>(pBegin), pEnd, szClassName);
 	if (!unOffset) {
@@ -1609,10 +1397,6 @@ vecSymbolsAddresses RTTI::GetVTablesAddressesFromModule(HMODULE hModule) {
 
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
-	
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
 
 	vecData = GetVTablesAddressesFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 
@@ -1647,10 +1431,6 @@ vecSymbolsOffsets RTTI::GetVTablesOffsetsFromModule(HMODULE hModule) {
 	unsigned char* pBegin = reinterpret_cast<unsigned char*>(modinf.lpBaseOfDll);
 	void* pEnd = reinterpret_cast<void*>(pBegin + modinf.SizeOfImage);
 
-#ifdef RTTI_EXPERIMENTAL_OPTIMIZATION
-	GetRealModuleDimensions(reinterpret_cast<void**>(&pBegin), &pEnd);
-#endif // RTTI_EXPERIMENTAL_OPTIMIZATION
-
 	vecData = GetVTablesOffsetsFromRange(reinterpret_cast<void*>(pBegin), pEnd);
 
 	if (m_bCaching && m_bModulesCaching && (vecData.size() > 0)) {
@@ -1666,7 +1446,7 @@ void* RTTI::GetVTableAddressFromRangeCache(void* pBegin, void* pEnd, const char*
 		RangeOfDataForRTII& dataRange = std::get<0>(*it);
 		void*& pcBegin = std::get<0>(dataRange);
 		void*& pcEnd = std::get<1>(dataRange);
-		if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+		if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 			vecSymbolsAddresses& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsAddresses::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
 				std::string& str_SymbolName = std::get<0>(*sit);
@@ -1684,7 +1464,7 @@ uintptr_t RTTI::GetVTableOffsetFromRangeCache(void* pBegin, void* pEnd, const ch
 		RangeOfDataForRTII& dataRange = std::get<0>(*it);
 		void*& pcBegin = std::get<0>(dataRange);
 		void*& pcEnd = std::get<1>(dataRange);
-		if ((pcBegin == pBegin) && (pcBegin == pEnd)) {
+		if ((pcBegin == pBegin) && (pcEnd == pEnd)) {
 			vecSymbolsOffsets& vecSymbols = std::get<1>(*it);
 			for (vecSymbolsOffsets::iterator sit = vecSymbols.begin(); sit != vecSymbols.end(); ++sit) {
 				std::string& str_SymbolName = std::get<0>(*sit);
@@ -1728,38 +1508,3 @@ uintptr_t RTTI::GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szCl
 	}
 	return 0;
 }
-
-// For processing
-bool RTTI::IsCacheEnabled() {
-	return m_bCaching;
-}
-
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-pvecRangesSymbolsAddresses RTTI::GetRangesAddressesCache() {
-	if (m_bCaching && m_bRangesCaching) {
-		return &m_vecRangesSymbolsAddressesCache;
-	}
-	return nullptr;
-}
-
-pvecModulesSymbolsAddresses RTTI::GetModulesAddressesCache() {
-	if (m_bCaching && m_bModulesCaching) {
-		return &m_vecModulesSymbolsAddressesCache;
-	}
-	return nullptr;
-}
-
-pvecRangesSymbolsOffsets RTTI::GetRangesOffsetsCache() {
-	if (m_bCaching && m_bRangesCaching) {
-		return &m_vecRangesSymbolsOffsetsCache;
-	}
-	return nullptr;
-}
-
-pvecModulesSymbolsOffsets RTTI::GetModulesOffsetsCache() {
-	if (m_bCaching && m_bModulesCaching) {
-		return &m_vecModulesSymbolsOffsetsCache;
-	}
-	return nullptr;
-}
-#endif // RTTI_EXPERIMENTAL_FEATURES

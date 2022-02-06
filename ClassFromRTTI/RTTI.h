@@ -4,8 +4,6 @@
 #define _RTTI_H_
 
 #define RTTI_DEFAULT_MAX_SYMBOL_LENGTH 0x7FF // 0x7FF - Max for MSVC
-//#define RTTI_EXPERIMENTAL_FEATURES
-#define RTTI_EXPERIMENTAL_OPTIMIZATION
 
 // Default
 #define WIN32_LEAN_AND_MEAN
@@ -64,12 +62,7 @@ typedef std::vector<ModuleSymbolsOffsets> vecModulesSymbolsOffsets, *pvecModules
 //---------------------------------------------------------------------------------
 class RTTI {
 public:
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	RTTI(bool bAutoScanInCache = false, bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bForceFastMethod = false, bool bMinIters = false);
-#else // RTTI_EXPERIMENTAL_FEATURES
 	RTTI(bool bCaching = false, bool bRangeCaching = false, bool bModulesCaching = false, bool bForceFastMethod = false, bool bMinIters = false);
-#endif // !RTTI_EXPERIMENTAL_FEATURES
-	~RTTI();
 private:
 	// Finding Pattern
 	void* FindSignature(unsigned char* pBegin, const unsigned char* pEnd, const char* szSignature);
@@ -96,23 +89,9 @@ private:
 	uintptr_t GetVTableOffsetFromRangeCache(void* pBegin, void* pEnd, const char* szClassName);
 	void* GetVTableAddressFromModuleCache(HMODULE hModule, const char* szClassName);
 	uintptr_t GetVTableOffsetFromModuleCache(HMODULE hModule, const char* szClassName);
-public:
-	// For processing
-	bool IsCacheEnabled();
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	pvecRangesSymbolsAddresses GetRangesAddressesCache();
-	pvecModulesSymbolsAddresses GetModulesAddressesCache();
-	pvecRangesSymbolsOffsets GetRangesOffsetsCache();
-	pvecModulesSymbolsOffsets GetModulesOffsetsCache();
-#endif // RTTI_EXPERIMENTAL_FEATURES
 private:
 	bool m_bAvailableSSE2;
 	bool m_bAvailableAVX2;
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-	void* m_pLdrRegisterDllNotification;
-	void* m_pLdrUnregisterDllNotification;
-	PVOID m_pCookie;
-#endif // RTTI_EXPERIMENTAL_FEATURES
 	bool m_bCaching;
 	bool m_bRangesCaching;
 	bool m_bModulesCaching;
@@ -122,11 +101,6 @@ private:
 	vecModulesSymbolsAddresses m_vecModulesSymbolsAddressesCache;
 	vecRangesSymbolsOffsets m_vecRangesSymbolsOffsetsCache;
 	vecModulesSymbolsOffsets m_vecModulesSymbolsOffsetsCache;
-#ifdef RTTI_EXPERIMENTAL_FEATURES
-public:
-	// For processing
-	std::vector<HANDLE> m_vecThreads;
-#endif // RTTI_EXPERIMENTAL_FEATURES
 };
 
 #endif // !_RTTI_H_
