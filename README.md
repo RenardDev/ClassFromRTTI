@@ -1,0 +1,1 @@
+# This project has been completed. This was the initial implementation of RTTI search, and it formed the basis of another project (You can find it here: https://github.com/RenardDev/Detours) and there will be no further updates or work on this project.
